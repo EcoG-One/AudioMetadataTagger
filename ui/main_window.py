@@ -4,6 +4,8 @@ import sys
 import os
 import json
 import time
+import logging
+import webbrowser
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -20,24 +22,21 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QTextEdit,
+    QPlainTextEdit,
+    QDialog,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 import mutagen
-import logging
-import webbrowser
-from config import FUZZY_THRESHOLD, DEFAULT_VALIDATE_TAGS
+import settings
+import logging_util
+
+# Import your modules
+from config import FUZZY_THRESHOLD, DEFAULT_VALIDATE_TAGS, DISCOGS_USER_AGENT
 from auth import OAuthAuthenticator
 from scanner import scan_folder, AudioFile
 from metadata import fuzzy_match_track, write_metadata
 from discogs_client import DiscogsClient
-from ui.dialogs import (
-    FileSelectorDialog,
-    MetadataPreviewDialog,
-    SearchResultsDialog,
-    DiscogsVerifierDialog,
-)
-import settings
-import logging_util
+from ui.dialogs import FileSelectorDialog, MetadataPreviewDialog, SearchResultsDialog
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +77,7 @@ class MetadataTaggerWindow(QMainWindow):
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
 
-        # Tabs
+        # --- Tabs ---
         self.tabs = QTabWidget()
         self.tab_files = QWidget()
         self.tab_results = QWidget()
@@ -88,21 +87,29 @@ class MetadataTaggerWindow(QMainWindow):
         self.tabs.addTab(self.tab_progress, "Progress")
         main_layout.addWidget(self.tabs)
 
-        # File Tab
+        # --- File Tab ---
         file_layout = QVBoxLayout(self.tab_files)
+
+        # Top Buttons
         self.btn_select = QPushButton("Select Folder")
         self.btn_scan = QPushButton("Scan & Preview")
         self.btn_search = QPushButton("Search Discogs")
         self.btn_match = QPushButton("Fuzzy Match & Tag")
-        self.btn_start_auth = QPushButton("Authenticate Discogs")
-        btn_h = QHBoxLayout()
 
+        # New Auth Button
+        self.btn_start_auth = QPushButton("Authenticate Discogs")
+
+        btn_h = QHBoxLayout()
         btn_h.addWidget(self.btn_select)
         btn_h.addWidget(self.btn_scan)
         btn_h.addWidget(self.btn_search)
         btn_h.addWidget(self.btn_match)
+        btn_h.addStretch()
         btn_h.addWidget(self.btn_start_auth)
         file_layout.addLayout(btn_h)
+
+        self.lbl_status = QLabel("Ready")
+        file_layout.addWidget(self.lbl_status)
 
         self.tbl_files = QTableView()
         self.tbl_files.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
@@ -117,95 +124,46 @@ class MetadataTaggerWindow(QMainWindow):
         )
         file_layout.addWidget(self.tbl_files)
 
-        # Results Tab
+        # --- Results Tab ---
         res_layout = QVBoxLayout(self.tab_results)
+        res_layout.addWidget(
+            QLabel("Select a release to view details and match tracks:")
+        )
+
         self.tbl_results = QTableView()
         self.model_results = QStandardItemModel()
         self.model_results.setHorizontalHeaderLabels(
-            ["Release ID", "Title", "Artist", "Year", "Image URL"]
+            ["ID", "Title", "Artist", "Year", "Cover"]
         )
         self.tbl_results.setModel(self.model_results)
         res_layout.addWidget(self.tbl_results)
 
-        # Progress Tab
+        # Detail View
+        self.txt_details = QTextEdit()
+        self.txt_details.setReadOnly(True)
+        self.txt_details.setMaximumHeight(150)
+        res_layout.addWidget(self.txt_details)
+
+        self.btn_load_details = QPushButton("Load Details for Selection")
+        res_layout.addWidget(self.btn_load_details)
+
+        # --- Progress Tab ---
         prog_layout = QVBoxLayout(self.tab_progress)
-        self.lbl_status = QLabel("Ready")
-        self.lbl_progress_info = QLabel("")
         self.bar_progress = QProgressBar()
         self.bar_progress.setValue(0)
+        prog_layout.addWidget(self.bar_progress)
+
         self.txt_errors = QTextEdit()
         self.txt_errors.setReadOnly(True)
-        prog_layout.addWidget(self.lbl_status)
-        prog_layout.addWidget(self.lbl_progress_info)
-        prog_layout.addWidget(self.bar_progress)
         prog_layout.addWidget(self.txt_errors)
 
-        # Connect signals
+        # --- Connections ---
         self.btn_select.clicked.connect(self._on_select_folder)
         self.btn_scan.clicked.connect(self._on_scan)
-        self.btn_start_auth = QPushButton("Authenticate Discogs")
-        btn_h.addWidget(self.btn_start_auth)
+        self.btn_search.clicked.connect(self._on_search_discogs)
+        self.btn_match.clicked.connect(self._on_match_and_tag)
         self.btn_start_auth.clicked.connect(self._on_authenticate_discogs)
-
-    def _on_authenticate_discogs(self):
-        """Trigger the authentication flow."""
-        self.btn_start_auth.setEnabled(False)
-        self.lbl_status.setText("Initiating Discogs authentication...")
-
-        try:
-            # 1. Get Request Token (Logic only)
-            url = self.authenticator.get_authorization_url()
-            print(f"Auth URL: {url}")
-
-            # 2. Open Browser (Main Thread)
-            import webbrowser
-
-            webbrowser.open(url)
-
-            # 3. Get Verifier (Main Thread)
-            dlg = DiscogsVerifierDialog(self)
-            if dlg.exec() == QDialog.DialogCode.Accepted:
-                verifier = dlg.get_verifier_code()
-
-                self.lbl_status.setText("Exchanging code for token...")
-
-                # 4. Exchange Code for Session (Logic only)
-                try:
-                    authenticated_session = (
-                        self.authenticator.get_authenticated_session(verifier)
-                    )
-                    self.discogs_client = DiscogsClient(authenticated_session)
-                    self.lbl_status.setText("Discogs Authenticated successfully.")
-                    QMessageBox.information(
-                        self, "Success", "You are now connected to Discogs."
-                    )
-                except Exception as e:
-                    self.lbl_status.setText("Authentication failed.")
-                    QMessageBox.warning(self, "Error", f"Could not verify code: {e}")
-            else:
-                self.lbl_status.setText("Authentication cancelled.")
-        except Exception as e:
-            self.lbl_status.setText("Auth Error.")
-            QMessageBox.warning(self, "Error", str(e))
-        finally:
-            self.btn_start_auth.setEnabled(True)
-
-    def _do_auth(self):
-        self.authenticator = OAuthAuthenticator()
-        session = self.authenticator.get_oauth_session()
-        return session
-
-    def _on_auth_finished(self, success, session):
-        self.btn_start_auth.setEnabled(True)
-        if success and session:
-            self.discogs_client = DiscogsClient(session)
-            self.lbl_status.setText("Discogs Authenticated successfully.")
-            QMessageBox.information(
-                self, "Success", "You are now connected to Discogs."
-            )
-        else:
-            self.lbl_status.setText("Authentication failed.")
-            QMessageBox.warning(self, "Error", "Could not authenticate with Discogs.")
+        self.btn_load_details.clicked.connect(self._on_load_release_details)
 
     def _setup_workers(self):
         self.worker_scan = WorkerThread(self._do_scan)
@@ -218,13 +176,64 @@ class MetadataTaggerWindow(QMainWindow):
         self.worker_tag.progress.connect(self._update_progress)
         self.worker_tag.finished.connect(self._on_tag_finished)
 
+    # --- Auth Logic ---
+    def _on_authenticate_discogs(self):
+        """Trigger the authentication flow entirely in the Main Thread."""
+        self.btn_start_auth.setEnabled(False)
+        self.lbl_status.setText("Opening browser for Discogs authentication...")
+
+        try:
+            # 1. Get Request Token (Logic only)
+            auth_url = self.authenticator.get_authorization_url()
+
+            # 2. Open Browser
+            webbrowser.open(auth_url)
+
+            # 3. Get Verifier (GUI Dialog)
+            dlg = QDialog()
+            dlg.setWindowTitle("Discogs Verification")
+            dlg.resize(400, 150)
+            layout = QVBoxLayout(dlg)
+            layout.addWidget(
+                QLabel(
+                    "Please authorize in your browser, then paste the VERIFIER code:"
+                )
+            )
+            txt = QPlainTextEdit()
+            txt.setPlaceholderText("Paste code here...")
+            layout.addWidget(txt)
+            btn_ok = QPushButton("Confirm")
+            layout.addWidget(btn_ok)
+            btn_ok.clicked.connect(dlg.accept)
+
+            code = ""
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                code = txt.toPlainText().strip()
+
+                self.lbl_status.setText("Exchanging code for token...")
+                self.btn_start_auth.setEnabled(False)  # Disable again just in case
+
+                # 4. Exchange Code for Session (Logic only)
+                session = self.authenticator.get_authenticated_session(code)
+                self.discogs_client = DiscogsClient(session)
+
+                self.lbl_status.setText("Discogs Authenticated successfully.")
+                QMessageBox.information(self, "Success", "Connected to Discogs.")
+            else:
+                self.lbl_status.setText("Authentication cancelled.")
+
+        except Exception as e:
+            self.lbl_status.setText("Auth Error.")
+            QMessageBox.warning(self, "Error", str(e))
+        finally:
+            self.btn_start_auth.setEnabled(True)
+
+    # --- File Logic ---
     def _on_select_folder(self):
-        dlg = FileSelectorDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            path = dlg.get_path()
-            if path:
-                self.lbl_status.setText(f"Selected: {path}")
-                self.base_dir = Path(path)
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+        if folder:
+            self.lbl_status.setText(f"Selected: {folder}")
+            self.base_dir = Path(folder)
 
     def _on_scan(self):
         if not hasattr(self, "base_dir"):
@@ -259,47 +268,42 @@ class MetadataTaggerWindow(QMainWindow):
             self.model_files.appendRow(row)
 
         self.lbl_status.setText(f"Found {len(self.files)} files.")
-        self.btn_scan.setEnabled(True)
 
+    # --- Discogs Logic ---
     def _on_search_discogs(self):
         if not self.files:
             QMessageBox.warning(self, "Warning", "Scan files first.")
             return
+        if not self.discogs_client:
+            QMessageBox.warning(
+                self, "Warning", "Please authenticate with Discogs first."
+            )
+            return
 
-        first_tags = self.files[0].tags
-        art = first_tags.get(
+        # Get Artist/Album from first file or folder structure
+        first_file = self.files[0]
+        # Fallback logic from prompt
+        art = first_file.tags.get(
             "artist",
             (
-                os.path.basename(self.base_dir.parent.name)
-                if hasattr(self.base_dir.parent, "name")
-                else ""
+                self.base_dir.parent.name
+                if hasattr(self.base_dir, "parent")
+                else "Unknown"
             ),
         )
-        alb = first_tags.get("album", os.path.basename(self.base_dir.name))
+        alb = first_file.tags.get("album", self.base_dir.name)
 
-        dlg = MetadataPreviewDialog(art, alb, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            new_art, new_alb = dlg.get_metadata()
-            self.tabs.setCurrentIndex(1)
-            self.lbl_status.setText("Searching Discogs...")
-            self.worker_search.start(new_art, new_alb)
+        # Show confirmation dialog (simplified)
+        self.lbl_status.setText("Searching Discogs...")
+        self.tabs.setCurrentIndex(1)
+        self.worker_search.start(art, alb)
 
     def _do_search(self, art, alb):
         if not self.discogs_client:
-            self.authenticator.exchange_verifier_for_token(
-                QMessageBox.question(
-                    self,
-                    "OAuth",
-                    "Paste the verifier code from the browser:\n\n",
-                    QMessageBox.StandardButton.Ok,
-                )
-            )
-            self.discogs_client = DiscogsClient(
-                self.authenticator.get_authenticated_session()
-            )
+            raise Exception("Not authenticated")
 
         results = []
-        for p in range(1, 4):
+        for p in range(1, 3):  # Check first 2 pages
             res = self.discogs_client.search_releases(art, alb, page=p)
             results.extend(res)
             if not res:
@@ -309,7 +313,7 @@ class MetadataTaggerWindow(QMainWindow):
     def _on_search_finished(self, success, data):
         if not success or not data:
             QMessageBox.warning(
-                self, "Search Failed", "No results found. Check connection or query."
+                self, "Search Failed", "No results found. Try different search terms."
             )
             return
         self.results_data = data
@@ -325,6 +329,29 @@ class MetadataTaggerWindow(QMainWindow):
             self.model_results.appendRow(row)
         self.lbl_status.setText(f"Found {len(data)} releases.")
 
+    def _on_load_release_details(self):
+        sel = self.tbl_results.selectionModel().selection()
+        if not sel.indexes():
+            return
+        sel_row = sel.indexes()[0].row()
+        res_id = self.results_data[sel_row]["id"]
+
+        if not self.discogs_client:
+            return
+
+        self.lbl_status.setText("Loading details...")
+        release = self.discogs_client.get_release(res_id)
+
+        if release:
+            txt = f"Title: {release['title']}\nArtist: {release['artist']}\nYear: {release['year']}\n\nTracks:\n"
+            for t in release.get("tracks", []):
+                txt += f"{t['position']}. {t['title']}\n"
+            self.txt_details.setPlainText(txt)
+            self.lbl_status.setText("Details loaded.")
+        else:
+            self.lbl_status.setText("Failed to load details.")
+
+    # --- Tagging Logic ---
     def _on_match_and_tag(self):
         if not hasattr(self, "results_data") or not self.results_data:
             QMessageBox.warning(self, "Warning", "No search results available.")
@@ -338,27 +365,43 @@ class MetadataTaggerWindow(QMainWindow):
         sel_row = sel.indexes()[0].row()
         sel_data = self.results_data[sel_row]
 
-        # Fuzzy match
-        matches = []
-        unmatched = []
-        for f in self.files:
-            matched_title, score = fuzzy_match_track(
-                f.filename, [t["title"] for t in sel_data["tracks"]], FUZZY_THRESHOLD
-            )
-            if matched_title:
-                matches.append((f, matched_title))
-            else:
-                unmatched.append(f)
+        # Get track list for this release to match against
+        # Note: We must ensure get_release is called to get the full tracklist if we haven't yet
+        if not "tracks" in sel_data or not sel_data["tracks"]:
+            if self.discogs_client:
+                sel_data = self.discogs_client.get_release(sel_data["id"])
+                # Update internal list too
+                self.results_data[sel_row] = sel_data
 
-        if not matches:
+        if not sel_data.get("tracks"):
             QMessageBox.warning(
-                self, "Match Failed", "No tracks matched. Try a different release."
+                self, "Error", "Could not fetch tracklist for this release."
             )
             return
 
-        # Tagging
+        matches = []
+        for f in self.files:
+            # Extract clean name
+            clean_name = Path(f.filename).stem
+            # Match against current release tracks
+            matched_title, score = fuzzy_match_track(
+                clean_name, [t["title"] for t in sel_data["tracks"]], FUZZY_THRESHOLD
+            )
+
+            if matched_title:
+                matches.append((f, matched_title))
+            else:
+                # Optionally add to a separate unmatched list or just skip
+                pass
+
+        if not matches:
+            QMessageBox.warning(
+                self, "Match Failed", "No tracks matched automatically."
+            )
+            return
+
         self.bar_progress.setValue(0)
-        self.lbl_progress_info.setText(f"Tagging {len(matches)} files...")
+        self.lbl_status.setText(f"Tagging {len(matches)} files...")
         self.txt_errors.clear()
         self.worker_tag.start(matches, sel_data)
 
@@ -376,25 +419,29 @@ class MetadataTaggerWindow(QMainWindow):
             except:
                 pass
 
+        success_count = 0
         for i, (file_obj, track_title) in enumerate(matches):
             tags = {
                 "title": track_title,
                 "artist": release_data["artist"],
                 "album": release_data["title"],
-                "tracknumber": str(file_obj.tags.get("tracknumber", i + 1)),
+                "tracknumber": str(i + 1),  # Or try to find track number from release
                 "date": str(release_data["year"]) if release_data["year"] else "",
                 "genre": release_data["genre"],
             }
             success = write_metadata(
                 str(file_obj.path), tags, art_bytes, file_obj.format_name
             )
+            if success:
+                success_count += 1
+            else:
+                errors.append(file_obj.path.name)
+
             self.progress.emit(
                 int((i + 1) / total * 100), f"Tagged {file_obj.filename}"
             )
-            if not success:
-                errors.append(file_obj.path.name)
 
-        return success if not errors else False, errors
+        return success_count == total, errors
 
     def _update_progress(self, val, msg):
         self.bar_progress.setValue(val)
@@ -427,16 +474,10 @@ class MetadataTaggerWindow(QMainWindow):
 
 def main():
     logging_util.setup_logging()
+    from PyQt6.QtWidgets import QApplication
+
     app = QApplication(sys.argv)
     settings.SETTINGS.init_defaults()
     window = MetadataTaggerWindow()
     window.show()
     sys.exit(app.exec())
-
-
-# Fallback entry point
-if __name__ == "__main__":
-    import sys
-    from PyQt6.QtWidgets import QApplication
-
-    main()
