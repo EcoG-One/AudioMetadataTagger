@@ -169,12 +169,9 @@ class MetadataTaggerWindow(QMainWindow):
         self.worker_scan = WorkerThread(self._do_scan)
         self.worker_scan.finished.connect(self._on_scan_finished)
 
-        self.worker_search = WorkerThread(self._do_search)
-        self.worker_search.finished.connect(self._on_search_finished)
-
-        self.worker_tag = WorkerThread(self._do_tag)
-        self.worker_tag.progress.connect(self._update_progress)
-        self.worker_tag.finished.connect(self._on_tag_finished)
+        # Worker placeholders, actual init happens with args in call methods
+        self.worker_search = None
+        self.worker_tag = None
 
     # --- Auth Logic ---
     def _on_authenticate_discogs(self):
@@ -242,7 +239,11 @@ class MetadataTaggerWindow(QMainWindow):
         self.tabs.setCurrentIndex(0)
         self.lbl_status.setText("Scanning...")
         self.bar_progress.setValue(0)
-        self.worker_scan.start()
+
+        # Instantiate worker with task and arguments
+        self.worker_scan = WorkerThread(self._do_scan)
+        self.worker_scan.finished.connect(self._on_scan_finished)
+        self.worker_scan.start()  # Call start without args
 
     def _do_scan(self):
         return scan_folder(self.base_dir)
@@ -296,7 +297,11 @@ class MetadataTaggerWindow(QMainWindow):
         # Show confirmation dialog (simplified)
         self.lbl_status.setText("Searching Discogs...")
         self.tabs.setCurrentIndex(1)
-        self.worker_search.start(art, alb)
+
+        # Instantiate worker with arguments
+        self.worker_search = WorkerThread(self._do_search, art, alb)
+        self.worker_search.finished.connect(self._on_search_finished)
+        self.worker_search.start()
 
     def _do_search(self, art, alb):
         if not self.discogs_client:
@@ -394,6 +399,7 @@ class MetadataTaggerWindow(QMainWindow):
                 # Optionally add to a separate unmatched list or just skip
                 pass
 
+        #   Corrected Tagging Start logic:
         if not matches:
             QMessageBox.warning(
                 self, "Match Failed", "No tracks matched automatically."
@@ -403,7 +409,12 @@ class MetadataTaggerWindow(QMainWindow):
         self.bar_progress.setValue(0)
         self.lbl_status.setText(f"Tagging {len(matches)} files...")
         self.txt_errors.clear()
-        self.worker_tag.start(matches, sel_data)
+
+        # Instantiate worker with arguments
+        self.worker_tag = WorkerThread(self._do_tag, matches, sel_data)
+        self.worker_tag.finished.connect(self._on_tag_finished)
+        self.worker_tag.progress.connect(self._update_progress)
+        self.worker_tag.start()
 
     def _do_tag(self, matches, release_data):
         total = len(matches)
