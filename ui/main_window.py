@@ -7,24 +7,16 @@ import time
 import logging
 import webbrowser
 from pathlib import Path
+import webbrowser
 from PyQt6.QtWidgets import (
-    QMainWindow,
-    QTabWidget,
-    QTableView,
-    QStandardItemModel,
-    QProgressBar,
-    QLabel,
-    QPushButton,
-    QHeaderView,
-    QMessageBox,
-    QFileDialog,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QTextEdit,
-    QPlainTextEdit,
     QDialog,
+    QVBoxLayout,
+    QLabel,
+    QLineEdit,
+    QDialogButtonBox,
+    QMessageBox,
 )
+
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 import mutagen
 import settings
@@ -71,6 +63,8 @@ class MetadataTaggerWindow(QMainWindow):
         self._init_ui()
         self._setup_workers()
         self._apply_theme()
+        # Auto-authenticate on startup using persisted credentials
+        self._auto_authenticate_discogs()
 
     def _init_ui(self):
         central = QWidget()
@@ -174,54 +168,70 @@ class MetadataTaggerWindow(QMainWindow):
         self.worker_tag = None
 
     # --- Auth Logic ---
+    def _auto_authenticate_discogs(self):
+        """Attempts to automatically authenticate using stored tokens."""
+        if not self.authenticator:
+            return
+
+        session = self.authenticator.restore_session()
+
+        if session:
+            self.discogs_client = DiscogsClient(session)
+            self.lbl_status.setText("Discogs Session Restored.")
+            self.lbl_status.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            self.lbl_status.setText(
+                "Discogs not authenticated. Click 'Authenticate Discogs' to login."
+            )
+            self.lbl_status.setStyleSheet("color: orange;")
+
     def _on_authenticate_discogs(self):
-        """Trigger the authentication flow entirely in the Main Thread."""
+        """Handles manual authentication flow (falls back if token invalid/expired)."""
         self.btn_start_auth.setEnabled(False)
         self.lbl_status.setText("Opening browser for Discogs authentication...")
 
         try:
-            # 1. Get Request Token (Logic only)
             auth_url = self.authenticator.get_authorization_url()
-
-            # 2. Open Browser
             webbrowser.open(auth_url)
 
-            # 3. Get Verifier (GUI Dialog)
-            dlg = QDialog()
-            dlg.setWindowTitle("Discogs Verification")
-            dlg.resize(400, 150)
-            layout = QVBoxLayout(dlg)
-            layout.addWidget(
-                QLabel(
-                    "Please authorize in your browser, then paste the VERIFIER code:"
-                )
-            )
-            txt = QPlainTextEdit()
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Discogs Verification Code")
+            layout = QVBoxLayout()
+            lbl = QLabel("Visit the URL above, authorize, and paste the code here:")
+            txt = QLineEdit()
             txt.setPlaceholderText("Paste code here...")
-            layout.addWidget(txt)
-            btn_ok = QPushButton("Confirm")
-            layout.addWidget(btn_ok)
-            btn_ok.clicked.connect(dlg.accept)
+            btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
 
-            code = ""
-            if dlg.exec() == QDialog.DialogCode.Accepted:
+            layout.addWidget(lbl)
+            layout.addWidget(txt)
+            layout.addWidget(btns)
+            dlg.setLayout(layout)
+
+            btns.accepted.connect(dlg.accept)
+            btns.rejected.connect(dlg.reject)
+
+            if dlg.exec() == QDialog.Accepted:
                 code = txt.toPlainText().strip()
+                if not code:
+                    QMessageBox.warning(
+                        self, "Missing Code", "Verification code cannot be empty."
+                    )
+                    return
 
                 self.lbl_status.setText("Exchanging code for token...")
-                self.btn_start_auth.setEnabled(False)  # Disable again just in case
 
-                # 4. Exchange Code for Session (Logic only)
                 session = self.authenticator.get_authenticated_session(code)
                 self.discogs_client = DiscogsClient(session)
 
                 self.lbl_status.setText("Discogs Authenticated successfully.")
-                QMessageBox.information(self, "Success", "Connected to Discogs.")
-            else:
-                self.lbl_status.setText("Authentication cancelled.")
-
+                self.lbl_status.setStyleSheet("color: green; font-weight: bold;")
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    "Connected to Discogs. Your token is now saved locally.",
+                )
         except Exception as e:
-            self.lbl_status.setText("Auth Error.")
-            QMessageBox.warning(self, "Error", str(e))
+            QMessageBox.critical(self, "Authentication Error", str(e))
         finally:
             self.btn_start_auth.setEnabled(True)
 
