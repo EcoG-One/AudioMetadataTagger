@@ -148,19 +148,21 @@ class MetadataTaggerWindow(QMainWindow):
         self.btn_start_auth.clicked.connect(self._on_authenticate_discogs)
 
     def _on_authenticate_discogs(self):
-        """Handle the authentication flow entirely in the Main Thread."""
+        """Trigger the authentication flow."""
         self.btn_start_auth.setEnabled(False)
         self.lbl_status.setText("Initiating Discogs authentication...")
 
         try:
-            # 1. Get Request Token (Logic only, no GUI)
+            # 1. Get Request Token (Logic only)
             url = self.authenticator.get_authorization_url()
             print(f"Auth URL: {url}")
 
-            # 2. Open Browser
+            # 2. Open Browser (Main Thread)
+            import webbrowser
+
             webbrowser.open(url)
 
-            # 3. Open Dialog (GUI - Main Thread)
+            # 3. Get Verifier (Main Thread)
             dlg = DiscogsVerifierDialog(self)
             if dlg.exec() == QDialog.DialogCode.Accepted:
                 verifier = dlg.get_verifier_code()
