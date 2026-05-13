@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class DiscogsClient:
     def __init__(self, oauth_session):
         """
-        :param oauth_session: An authenticated OAuth1Session instance.
+        :param oauth_session: An authenticated OAuth1Session instance from auth.py
         """
         self.session = oauth_session
         self.session.headers["User-Agent"] = DISCOGS_USER_AGENT
@@ -20,7 +20,6 @@ class DiscogsClient:
 
     def _make_request(self, url, params=None):
         """Internal helper to handle rate limiting and headers."""
-        # Rate limiting
         elapsed = time.time() - self.last_request_time
         if elapsed < self.rate_limit_delay:
             time.sleep(self.rate_limit_delay - elapsed)
@@ -35,7 +34,7 @@ class DiscogsClient:
             if e.response.status_code == 429:
                 logger.warning("Rate limit hit. Sleeping.")
                 time.sleep(e.response.json().get("retry-after", 10))
-                return self._make_request(url, params)  # Retry
+                return self._make_request(url, params)
             logger.error(f"API Error: {e.response.status_code} - {e.response.text}")
             return None
         except Exception as e:
@@ -52,13 +51,10 @@ class DiscogsClient:
             "per_page": per_page,
             "page": page,
         }
-
-        # Discogs search endpoint
         url = "https://api.discogs.com/database/search"
         data = self._make_request(url, params=params)
 
         if data:
-            # Normalize response to match our expected dictionary format
             results = []
             for item in data.get("hits", []):
                 results.append(
@@ -81,24 +77,19 @@ class DiscogsClient:
         if not data:
             return {}
 
-        # Fetch master release details for tracklist if available (often more complete)
+        # Fetch master release details if available
         if data.get("master_url"):
             master_data = self._make_request(data.get("master_url"))
             if master_data:
                 data.update(master_data)
 
-        # Construct our dictionary structure
         tracks = []
-        tracklist = data.get("tracklist", [])
-        for track in tracklist:
+        for track in data.get("tracklist", []):
             tracks.append(
                 {"position": track.get("position", ""), "title": track.get("title", "")}
             )
 
-        labels = []
-        for l in data.get("labels", []):
-            if l.get("name"):
-                labels.append(l["name"])
+        labels = [l["name"] for l in data.get("labels", []) if l.get("name")]
 
         return {
             "id": data.get("id", release_id),
@@ -119,9 +110,7 @@ class DiscogsClient:
         }
 
     def get_artwork_url(self, release_data: dict) -> str:
-        """Ensure the image URL is valid."""
         url = release_data.get("image_url", "")
-        # Standardize image URL to Discogs CDN
-        if url:
-            return url.replace("https://discogs.com/", "https://i.discogs.com/")
-        return ""
+        return (
+            url.replace("https://discogs.com/", "https://i.discogs.com/") if url else ""
+        )

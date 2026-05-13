@@ -24,13 +24,18 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 import mutagen
 import logging
-
+import webbrowser
 from config import FUZZY_THRESHOLD, DEFAULT_VALIDATE_TAGS
 from auth import OAuthAuthenticator
 from scanner import scan_folder, AudioFile
 from metadata import fuzzy_match_track, write_metadata
 from discogs_client import DiscogsClient
-from ui.dialogs import FileSelectorDialog, MetadataPreviewDialog, SearchResultsDialog
+from ui.dialogs import (
+    FileSelectorDialog,
+    MetadataPreviewDialog,
+    SearchResultsDialog,
+    DiscogsVerifierDialog,
+)
 import settings
 import logging_util
 
@@ -89,11 +94,14 @@ class MetadataTaggerWindow(QMainWindow):
         self.btn_scan = QPushButton("Scan & Preview")
         self.btn_search = QPushButton("Search Discogs")
         self.btn_match = QPushButton("Fuzzy Match & Tag")
+        self.btn_start_auth = QPushButton("Authenticate Discogs")
         btn_h = QHBoxLayout()
+
         btn_h.addWidget(self.btn_select)
         btn_h.addWidget(self.btn_scan)
         btn_h.addWidget(self.btn_search)
         btn_h.addWidget(self.btn_match)
+        btn_h.addWidget(self.btn_start_auth)
         file_layout.addLayout(btn_h)
 
         self.tbl_files = QTableView()
@@ -135,21 +143,50 @@ class MetadataTaggerWindow(QMainWindow):
         # Connect signals
         self.btn_select.clicked.connect(self._on_select_folder)
         self.btn_scan.clicked.connect(self._on_scan)
-
-        # Change: Start Authentication Button
         self.btn_start_auth = QPushButton("Authenticate Discogs")
         btn_h.addWidget(self.btn_start_auth)
         self.btn_start_auth.clicked.connect(self._on_authenticate_discogs)
 
     def _on_authenticate_discogs(self):
-        """Trigger the OAuth flow."""
+        """Handle the authentication flow entirely in the Main Thread."""
         self.btn_start_auth.setEnabled(False)
-        self.lbl_status.setText("Opening browser for Discogs authentication...")
+        self.lbl_status.setText("Initiating Discogs authentication...")
 
-        # Run auth in a thread to avoid freezing GUI
-        self.worker_auth = WorkerThread(self._do_auth)
-        self.worker_auth.finished.connect(self._on_auth_finished)
-        self.worker_auth.start()
+        try:
+            # 1. Get Request Token (Logic only, no GUI)
+            url = self.authenticator.get_authorization_url()
+            print(f"Auth URL: {url}")
+
+            # 2. Open Browser
+            webbrowser.open(url)
+
+            # 3. Open Dialog (GUI - Main Thread)
+            dlg = DiscogsVerifierDialog(self)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                verifier = dlg.get_verifier_code()
+
+                self.lbl_status.setText("Exchanging code for token...")
+
+                # 4. Exchange Code for Session (Logic only)
+                try:
+                    authenticated_session = (
+                        self.authenticator.get_authenticated_session(verifier)
+                    )
+                    self.discogs_client = DiscogsClient(authenticated_session)
+                    self.lbl_status.setText("Discogs Authenticated successfully.")
+                    QMessageBox.information(
+                        self, "Success", "You are now connected to Discogs."
+                    )
+                except Exception as e:
+                    self.lbl_status.setText("Authentication failed.")
+                    QMessageBox.warning(self, "Error", f"Could not verify code: {e}")
+            else:
+                self.lbl_status.setText("Authentication cancelled.")
+        except Exception as e:
+            self.lbl_status.setText("Auth Error.")
+            QMessageBox.warning(self, "Error", str(e))
+        finally:
+            self.btn_start_auth.setEnabled(True)
 
     def _do_auth(self):
         self.authenticator = OAuthAuthenticator()

@@ -129,3 +129,32 @@ class SearchResultsDialog(QDialog):
                 self.model.item(row, 4).text(),
             )
         return None
+
+
+class DiscogsVerifierDialog(QDialog):
+    """Dialog to get the OAUTH_VERIFIER code from the user."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Discogs Authentication")
+        self.resize(400, 150)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel(
+                "Please authorize the app in your browser, then paste the VERIFIER code below:"
+            )
+        )
+
+        self.txt = QPlainTextEdit()
+        self.txt.setPlaceholderText("Paste the 7-digit code here...")
+        layout.addWidget(self.txt)
+
+        btn_ok = QPushButton("Confirm")
+        layout.addWidget(btn_ok)
+
+        # Connect button to accept the dialog
+        btn_ok.clicked.connect(self.accept)
+
+    def get_verifier_code(self):
+        return self.txt.toPlainText().strip()
