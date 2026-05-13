@@ -334,27 +334,124 @@ class MetadataTaggerWindow(QMainWindow):
             self.model_results.appendRow(row)
         self.lbl_status.setText(f"Found {len(data)} releases.")
 
-    def _on_load_release_details(self):
-        sel = self.tbl_results.selectionModel().selection()
-        if not sel.indexes():
-            return
-        sel_row = sel.indexes()[0].row()
-        res_id = self.results_data[sel_row]["id"]
+    """Discogs API Client wrapper using requests."""
+import requests
+import time
+import logging
+from config import DISCOGS_USER_AGENT
 
-        if not self.discogs_client:
-            return
+logger = logging.getLogger(__name__)
 
-        self.lbl_status.setText("Loading details...")
-        release = self.discogs_client.get_release(res_id)
 
-        if release:
-            txt = f"Title: {release['title']}\nArtist: {release['artist']}\nYear: {release['year']}\n\nTracks:\n"
-            for t in release.get("tracks", []):
-                txt += f"{t['position']}. {t['title']}\n"
-            self.txt_details.setPlainText(txt)
-            self.lbl_status.setText("Details loaded.")
-        else:
-            self.lbl_status.setText("Failed to load details.")
+class DiscogsClient:
+    def __init__(self, oauth_session):
+        self.session = oauth_session
+        self.session.headers["User-Agent"] = DISCOGS_USER_AGENT
+        self.last_request_time = 0
+        self.rate_limit_delay = 0.2
+
+    def _make_request(self, url, params=None):
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.rate_limit_delay:
+            time.sleep(self.rate_limit_delay - elapsed)
+        self.last_request_time = time.time()
+
+        try:
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            # Return None instead of crashing if 404 or other errors
+            return None
+        except Exception as e:
+            logger.error(f"Request Failed: {e}")
+            return None
+
+    def search_releases(
+        self, artist: str, album: str, page: int = 1, per_page: int = 50
+    ):
+        query_string = f"{artist} {album}"
+        params = {
+            "q": query_string,
+            "type": "release",
+            "per_page": min(per_page, 50),
+            "page": page,
+        }
+        url = "https://api.discogs.com/database/search"
+        data = self._make_request(url, params=params)
+
+        if not data:
+            return []
+
+        results = []
+        for item in data.get("hits", []):
+            results.append(
+                {
+                    "id": item["id"],
+                    "title": item.get("title", ""),
+                    "artist": item.get("artist", ""),
+                    "year": item.get("year", ""),
+                    "image_url": item.get("cover_image", ""),
+                    "master_id": item.get(
+                        "master_id"
+                    ),  # Added: Store Master ID if available
+                    "resource_url": item.get("resource_url"),
+                }
+            )
+        return results
+
+    def get_release(self, release_id: int) -> dict:
+        """Fetch specific Release info."""
+        url = f"https://api.discogs.com/releases/{release_id}"
+        data = self._make_request(url)
+        return self._format_release_data(data)
+
+    def get_master(self, master_id: int) -> dict:
+        """Fetch Master Release info (Fallback for 404 releases)."""
+        url = f"https://api.discogs.com/masters/{master_id}"
+        data = self._make_request(url)
+        if not data:
+            return {}
+
+        # Construct a dictionary similar to get_release for UI consistency
+        tracks = []
+        for t in data.get("tracks", []):
+            tracks.append({"position": t.get("position"), "title": t.get("title")})
+
+        return {
+            "id": data.get("id"),
+            "title": data.get("title"),
+            "artist": data.get("artist"),
+            "year": data.get("master_year"),
+            "tracks": tracks,
+            "image_url": data.get("cover_image")
+            or (data.get("images", [{}])[0].get("uri") if data.get("images") else ""),
+        }
+
+    def _format_release_data(self, data):
+        """Helper to convert API data to internal dict format."""
+        if not data:
+            return {}
+
+        tracks = []
+        for t in data.get("tracklist", []):
+            tracks.append({"position": t.get("position"), "title": t.get("title")})
+
+        labels = [l["name"] for l in data.get("labels", []) if l.get("name")]
+        img = data.get("cover_image", "")
+        if not img and data.get("images"):
+            img = data["images"][0].get("uri", "")
+
+        return {
+            "id": data.get("id"),
+            "title": data.get("title"),
+            "artist": data.get("artist"),
+            "year": data.get("year"),
+            "label": labels[0] if labels else "",
+            "genre": data.get("genres", [None])[0] if data.get("genres") else "",
+            "tracks": tracks,
+            "image_url": img,
+        }
 
     # --- Tagging Logic ---
     def _on_match_and_tag(self):
@@ -368,50 +465,70 @@ class MetadataTaggerWindow(QMainWindow):
             return
 
         sel_row = sel.indexes()[0].row()
-        sel_data = self.results_data[sel_row]
+        sel_data = self.results_data[sel_row]  # This is the raw search result
 
-        # Get track list for this release to match against
-        # Note: We must ensure get_release is called to get the full tracklist if we haven't yet
-        if not "tracks" in sel_data or not sel_data["tracks"]:
-            if self.discogs_client:
-                sel_data = self.discogs_client.get_release(sel_data["id"])
-                # Update internal list too
-                self.results_data[sel_row] = sel_data
+        # Try to get the tracks
+        tracks = sel_data.get("tracks")
 
-        if not sel_data.get("tracks"):
+        # If tracks missing or empty, try fetching full details (with fallback)
+        if not tracks:
+            res_id = sel_data["id"]
+            master_id = sel_data.get("master_id")
+            fetched_release = self.discogs_client.get_release(res_id)
+
+            if not fetched_release and master_id:
+                fetched_release = self.discogs_client.get_master(master_id)
+
+            if fetched_release:
+                tracks = fetched_release.get("tracks", [])
+                # Update local display if we successfully fetched details
+                if not self.results_data[sel_row].get("tracks"):
+                    # Optional: Update the table result row with details
+                    pass
+
+        if not tracks:
             QMessageBox.warning(
                 self, "Error", "Could not fetch tracklist for this release."
             )
             return
 
+        # Proceed with matching
         matches = []
         for f in self.files:
-            # Extract clean name
             clean_name = Path(f.filename).stem
-            # Match against current release tracks
             matched_title, score = fuzzy_match_track(
-                clean_name, [t["title"] for t in sel_data["tracks"]], FUZZY_THRESHOLD
+                clean_name, [t["title"] for t in tracks], FUZZY_THRESHOLD
             )
-
             if matched_title:
                 matches.append((f, matched_title))
-            else:
-                # Optionally add to a separate unmatched list or just skip
-                pass
 
-        #   Corrected Tagging Start logic:
         if not matches:
             QMessageBox.warning(
                 self, "Match Failed", "No tracks matched automatically."
             )
             return
 
+        # ... (Tagging logic) ...
+
+        # NOTE: When tagging, we use sel_data (from search results) which might not have the full master details
+        # We should ideally update sel_data['artist'], 'title' etc from 'fetched_release' before tagging
+        # To keep it simple and safe, we will use the fetched data if available
+
+        release_data_to_use = sel_data
+        if tracks:  # We fetched tracks
+            release_data_to_use = {
+                "artist": sel_data["artist"] or fetched_release.get("artist"),
+                "title": sel_data["title"] or fetched_release.get("title"),
+                "year": sel_data["year"] or fetched_release.get("year"),
+                "genre": "",  # Genre is usually on specific release, not master
+                "image_url": sel_data["image_url"] or fetched_release.get("image_url"),
+            }
+
         self.bar_progress.setValue(0)
         self.lbl_status.setText(f"Tagging {len(matches)} files...")
         self.txt_errors.clear()
 
-        # Instantiate worker with arguments
-        self.worker_tag = WorkerThread(self._do_tag, matches, sel_data)
+        self.worker_tag = WorkerThread(self._do_tag, matches, release_data_to_use)
         self.worker_tag.finished.connect(self._on_tag_finished)
         self.worker_tag.progress.connect(self._update_progress)
         self.worker_tag.start()
