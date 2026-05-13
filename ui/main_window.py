@@ -135,8 +135,38 @@ class MetadataTaggerWindow(QMainWindow):
         # Connect signals
         self.btn_select.clicked.connect(self._on_select_folder)
         self.btn_scan.clicked.connect(self._on_scan)
-        self.btn_search.clicked.connect(self._on_search_discogs)
-        self.btn_match.clicked.connect(self._on_match_and_tag)
+
+        # Change: Start Authentication Button
+        self.btn_start_auth = QPushButton("Authenticate Discogs")
+        btn_h.addWidget(self.btn_start_auth)
+        self.btn_start_auth.clicked.connect(self._on_authenticate_discogs)
+
+    def _on_authenticate_discogs(self):
+        """Trigger the OAuth flow."""
+        self.btn_start_auth.setEnabled(False)
+        self.lbl_status.setText("Opening browser for Discogs authentication...")
+
+        # Run auth in a thread to avoid freezing GUI
+        self.worker_auth = WorkerThread(self._do_auth)
+        self.worker_auth.finished.connect(self._on_auth_finished)
+        self.worker_auth.start()
+
+    def _do_auth(self):
+        self.authenticator = OAuthAuthenticator()
+        session = self.authenticator.get_oauth_session()
+        return session
+
+    def _on_auth_finished(self, success, session):
+        self.btn_start_auth.setEnabled(True)
+        if success and session:
+            self.discogs_client = DiscogsClient(session)
+            self.lbl_status.setText("Discogs Authenticated successfully.")
+            QMessageBox.information(
+                self, "Success", "You are now connected to Discogs."
+            )
+        else:
+            self.lbl_status.setText("Authentication failed.")
+            QMessageBox.warning(self, "Error", "Could not authenticate with Discogs.")
 
     def _setup_workers(self):
         self.worker_scan = WorkerThread(self._do_scan)
