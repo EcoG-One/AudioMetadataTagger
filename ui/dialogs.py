@@ -1,30 +1,15 @@
 """GUI Dialogs for file selection, metadata preview, and search results."""
-
 import os
-from PyQt6.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QFileDialog,
-    QLabel,
-    QTableView,
-    QStandardItemModel,
-    QTabWidget,
-    QWidget,
-    QTextEdit,
-    QPlainTextEdit,
-    QProgressBar,
-    QMessageBox,
-)
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, 
+                             QLabel, QTableView, QTabWidget, QWidget,
+                             QTextEdit, QPlainTextEdit, QProgressBar, QMessageBox)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem
 from pathlib import Path
 from config import SUPPORTED_EXTENSIONS
 import logging
 
 logger = logging.getLogger(__name__)
-
 
 class FileSelectorDialog(QDialog):
     def __init__(self, parent=None):
@@ -39,16 +24,15 @@ class FileSelectorDialog(QDialog):
         self.path_label.setStyleSheet("color: gray; font-style: italic;")
         layout.addWidget(self.path_label)
         layout.addWidget(btn)
-
+        
     def _pick_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
             self.path_label.setText(folder)
             self.path_label.setStyleSheet("color: green; font-weight: bold;")
-
+            
     def get_path(self):
         return self.path_label.text()
-
 
 class MetadataPreviewDialog(QDialog):
     def __init__(self, artist: str, album: str, parent=None):
@@ -70,13 +54,9 @@ class MetadataPreviewDialog(QDialog):
         layout.addLayout(btn_box)
         self.btn_ok.clicked.connect(self.accept)
         self.btn_cancel.clicked.connect(self.reject)
-
+        
     def get_metadata(self):
-        return (
-            self.artist_edit.toPlainText().strip(),
-            self.album_edit.toPlainText().strip(),
-        )
-
+        return self.artist_edit.toPlainText().strip(), self.album_edit.toPlainText().strip()
 
 class SearchResultsDialog(QDialog):
     def __init__(self, results: list, parent=None):
@@ -96,11 +76,11 @@ class SearchResultsDialog(QDialog):
 
         for r in results:
             row = [
-                QStandardItem(str(r["id"])),
-                QStandardItem(r["title"]),
-                QStandardItem(r["artist"]),
-                QStandardItem(str(r["year"]) if r["year"] else ""),
-                QStandardItem(r.get("image_url", "No Cover")),
+                QStandardItem(str(r['id'])),
+                QStandardItem(r['title']),
+                QStandardItem(r['artist']),
+                QStandardItem(str(r['year']) if r['year'] else ""),
+                QStandardItem(r.get('image_url', 'No Cover'))
             ]
             self.model.appendRow(row)
 
@@ -121,13 +101,7 @@ class SearchResultsDialog(QDialog):
         sel = self.table.selectionModel().selection()
         if sel.indexes():
             row = sel.indexes()[0].row()
-            return (
-                self.model.item(row, 0).text(),
-                self.model.item(row, 1).text(),
-                self.model.item(row, 2).text(),
-                self.model.item(row, 3).text(),
-                self.model.item(row, 4).text(),
-            )
+            return self.model.item(row, 0).text(), self.model.item(row, 1).text(), self.model.item(row, 2).text(), self.model.item(row, 3).text(), self.model.item(row, 4).text()
         return None
 
 

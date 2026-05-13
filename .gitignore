@@ -1,1 +1,12 @@
 .env
+__pycache__/auth.cpython-314.pyc
+__pycache__/config.cpython-314.pyc
+__pycache__/discogs_client.cpython-314.pyc
+__pycache__/logging_util.cpython-314.pyc
+__pycache__/main.cpython-314.pyc
+__pycache__/metadata.cpython-314.pyc
+__pycache__/scanner.cpython-314.pyc
+__pycache__/settings.cpython-314.pyc
+ui/__pycache__/__init__.cpython-314.pyc
+ui/__pycache__/dialogs.cpython-314.pyc
+ui/__pycache__/main_window.cpython-314.pyc

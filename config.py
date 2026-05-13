@@ -2,9 +2,9 @@
 import os
 
 # Discogs API credentials
-CONSUMER_KEY = os.environ.get("Consumer_Key")
-CONSUMER_SECRET = os.environ.get("Consumer_Secret")
-USER_AGENT = os.environ.get("User-Agent")
+DISCOGS_CONSUMER_KEY = os.environ.get("Consumer_Key")
+DISCOGS_CONSUMER_SECRET = os.environ.get("Consumer_Secret")
+DISCOGS_USER_AGENT = os.environ.get("User-Agent")
 DISCOGS_API_BASE = "https://api.discogs.com"
 
 # API Endpoints

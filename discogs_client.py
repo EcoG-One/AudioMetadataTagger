@@ -49,7 +49,7 @@ class DiscogsClient:
             return []
 
         results = []
-        for item in data.get("hits", []):
+        for item in data.get("results", []):
             results.append(
                 {
                     "id": item["id"],

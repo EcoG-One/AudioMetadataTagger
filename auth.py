@@ -2,7 +2,13 @@ import json
 import logging
 from pathlib import Path
 from requests_oauthlib import OAuth1Session
-from config import DISCOGS_API_KEY, DISCOGS_API_SECRET
+from config import (
+    DISCOGS_CONSUMER_KEY,
+    DISCOGS_CONSUMER_SECRET,
+    DISCOGS_REQUEST_TOKEN_URL,
+    DISCOGS_AUTHORIZE_URL,
+    DISCOGS_ACCESS_TOKEN_URL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -12,8 +18,8 @@ TOKEN_FILE = Path(__file__).resolve().parent.parent / "data" / "discogs_token.js
 
 class OAuthAuthenticator:
     def __init__(self):
-        self.consumer_key = DISCOGS_API_KEY
-        self.consumer_secret = DISCOGS_API_SECRET
+        self.consumer_key = DISCOGS_CONSUMER_KEY
+        self.consumer_secret = DISCOGS_CONSUMER_SECRET
         self.session = None
         self.request_token = None
         self.request_token_secret = None
@@ -25,9 +31,7 @@ class OAuthAuthenticator:
             self.consumer_key, client_secret=self.consumer_secret
         )
         try:
-            resp = self.oauth.fetch_request_token(
-                "https://api.discogs.com/oauth/request_token"
-            )
+            resp = self.oauth.fetch_request_token(DISCOGS_REQUEST_TOKEN_URL)
             self.request_token = resp["oauth_token"]
             self.request_token_secret = resp["oauth_token_secret"]
         except Exception as e:
@@ -37,7 +41,7 @@ class OAuthAuthenticator:
         """Returns the URL for the user to visit and authorize the app."""
         if not self.request_token:
             self._init_request_token()
-        return self.oauth.authorization_url("https://api.discogs.com/oauth/authorize")
+        return self.oauth.authorization_url(DISCOGS_AUTHORIZE_URL)
 
     def get_authenticated_session(self, verifier: str):
         """Exchanges the request token and verifier for an access token and returns the authenticated session."""
@@ -56,7 +60,7 @@ class OAuthAuthenticator:
                 verifier=verifier,
             )
             resp = self.oauth.fetch_access_token(
-                "https://api.discogs.com/oauth/access_token"
+                DISCOGS_ACCESS_TOKEN_URL
             )
 
             # Step 2: Create the persistent session
