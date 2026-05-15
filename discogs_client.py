@@ -24,7 +24,12 @@ class DiscogsClient:
         try:
             response = self.session.get(url, params=params)
             response.raise_for_status()
-            return response.json()
+            if url.endswith(".jpeg") or url.endswith(".jpg") or url.endswith(".png"):
+                image = response.text
+                with open(image, "wb") as fh:
+                    fh.write(response.content)
+            else:
+                return response.json()
         except requests.exceptions.HTTPError as e:
             # Return None instead of crashing if 404 or other errors
             return None

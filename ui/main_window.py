@@ -20,7 +20,7 @@ import logging_util
 from config import FUZZY_THRESHOLD, DEFAULT_VALIDATE_TAGS, DISCOGS_USER_AGENT
 from auth import OAuthAuthenticator
 from scanner import scan_folder, AudioFile
-from metadata import fuzzy_match_track, write_metadata
+from metadata import fuzzy_match_track, write_tags
 from discogs_client import DiscogsClient
 from ui.dialogs import FileSelectorDialog, MetadataPreviewDialog, SearchResultsDialog
 
@@ -30,15 +30,20 @@ class WorkerThread(QThread):
     progress = pyqtSignal(int, str)
     finished = pyqtSignal(bool, object)
     
-    def __init__(self, task, *args, **kwargs):
+    def __init__(self, task, *args, with_progress=False, progress_callback=None, **kwargs):
         super().__init__()
         self.task = task
         self.args = args
+        self.with_progress = with_progress or progress_callback is not None
+        self.progress_callback = progress_callback or self.progress
         self.kwargs = kwargs
         
     def run(self):
         try:
-            res = self.task(*self.args, **self.kwargs)
+            if self.with_progress:
+                res = self.task(self.progress_callback, *self.args, **self.kwargs)
+            else:
+                res = self.task(*self.args, **self.kwargs)
             self.finished.emit(True, res)
         except Exception as e:
             logger.error(f"Worker error: {e}")
@@ -389,6 +394,11 @@ class MetadataTaggerWindow(QMainWindow):
 
     # --- Tagging Logic ---
     def _on_match_and_tag(self):
+        if not self.discogs_client:
+            QMessageBox.warning(
+                self, "Error", "Please authenticate with Discogs first."
+            )
+            return
         if not hasattr(self, "results_data") or not self.results_data:
             QMessageBox.warning(self, "Warning", "No search results available.")
             return
@@ -400,6 +410,8 @@ class MetadataTaggerWindow(QMainWindow):
 
         sel_row = sel.indexes()[0].row()
         sel_data = self.results_data[sel_row]  # This is the raw search result
+
+        fetched_release = None
 
         # Try to get the tracks
         tracks = sel_data.get("tracks")
@@ -448,26 +460,25 @@ class MetadataTaggerWindow(QMainWindow):
         # We should ideally update sel_data['artist'], 'title' etc from 'fetched_release' before tagging
         # To keep it simple and safe, we will use the fetched data if available
 
-        release_data_to_use = sel_data
-        if tracks:  # We fetched tracks
-            release_data_to_use = {
-                "artist": sel_data["artist"] or fetched_release.get("artist"),
-                "title": sel_data["title"] or fetched_release.get("title"),
-                "year": sel_data["year"] or fetched_release.get("year"),
-                "genre": "",  # Genre is usually on specific release, not master
-                "image_url": sel_data["image_url"] or fetched_release.get("image_url"),
-            }
+        release_source = fetched_release or sel_data
+        release_data_to_use = {
+            "artist": release_source.get("artist") or sel_data.get("artist", ""),
+            "title": release_source.get("title") or sel_data.get("title", ""),
+            "year": release_source.get("year") or sel_data.get("year", ""),
+            "genre": release_source.get("genre", ""),
+            "image_url": release_source.get("image_url") or sel_data.get("image_url", ""),
+        }
 
         self.bar_progress.setValue(0)
         self.lbl_status.setText(f"Tagging {len(matches)} files...")
         self.txt_errors.clear()
 
-        self.worker_tag = WorkerThread(self._do_tag, matches, release_data_to_use)
+        self.worker_tag = WorkerThread(self._do_tag, matches, release_data_to_use, with_progress=True)
         self.worker_tag.finished.connect(self._on_tag_finished)
         self.worker_tag.progress.connect(self._update_progress)
         self.worker_tag.start()
 
-    def _do_tag(self, matches, release_data):
+    def _do_tag(self, progress, matches, release_data):
         total = len(matches)
         errors = []
         art_url = release_data.get('image_url', '')
@@ -490,13 +501,18 @@ class MetadataTaggerWindow(QMainWindow):
                 'date': str(release_data['year']) if release_data['year'] else '',
                 'genre': release_data['genre']
             }
-            success = write_metadata(str(file_obj.path), tags, art_bytes, file_obj.format_name)
+            #   success = write_metadata(str(file_obj.path), tags, art_bytes, file_obj.format_name)
+            success = write_tags(
+                str(file_obj.path),
+                tags,
+                art_bytes,
+            )
             if success:
                 success_count += 1
             else:
                 errors.append(file_obj.path.name)
 
-            self.progress.emit(int((i+1)/total*100), f"Tagged {file_obj.filename}")
+            progress.emit(int((i+1)/total*100), f"Tagged {file_obj.filename}")
 
         return success_count == total, errors
 
