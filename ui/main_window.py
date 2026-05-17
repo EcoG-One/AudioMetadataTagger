@@ -184,7 +184,8 @@ class MetadataTaggerWindow(QMainWindow):
 
         self.tbl_results = QTableView()
         self.model_results = QStandardItemModel()
-        self.model_results.setHorizontalHeaderLabels(["ID", "Title", "Artist", "Year", "Cover"])
+        self.model_results.setHorizontalHeaderLabels(["ID", "Album", "Artist", "Year", "Cover", "Selected"])
+        self.model_results.itemChanged.connect(self._on_result_checkbox_changed)
         self.tbl_results.setModel(self.model_results)
         self.tbl_results.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         res_layout.addWidget(self.tbl_results)
@@ -317,7 +318,6 @@ class MetadataTaggerWindow(QMainWindow):
                 QStandardItem(f.tags.get("album", "")),
             ]
             self.model_files.appendRow(row)
-            print(f.tags)
 
         self.lbl_status.setText(f"Found {len(self.files)} files.")
 
@@ -330,6 +330,7 @@ class MetadataTaggerWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please authenticate with Discogs first.")
             return
 
+        # Get Artist/Album from selected file or folder structure
         sel = self.tbl_files.selectionModel().selection()
         if not sel.indexes():
             return
@@ -338,13 +339,14 @@ class MetadataTaggerWindow(QMainWindow):
         art = self.model_files.item(sel_row, 3).text()  # Artist column
         alb = self.model_files.item(sel_row, 4).text()  # Album column
 
-        # Get Artist/Album from first file or folder structure
-        # first_file = self.files[0]
-        # Fallback logic from prompt
-        # art = first_file.tags.get('artist', self.base_dir.parent.name if hasattr(self.base_dir, 'parent') else "Unknown")
-        # alb = first_file.tags.get('album', self.base_dir.name)
+        # Show confirmation dialog with editable fields
+        '''dlg = MetadataPreviewDialog(art, alb, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_art, new_alb = dlg.get_metadata()
+            self.tabs.setCurrentIndex(1)
+            self.lbl_status.setText("Searching Discogs...")
+            self.worker_search.start(new_art, new_alb) '''
 
-        # Show confirmation dialog (simplified)
         self.lbl_status.setText("Searching Discogs...")
         self.tabs.setCurrentIndex(1)
 
@@ -373,8 +375,26 @@ class MetadataTaggerWindow(QMainWindow):
         for r in data:
             row = [QStandardItem(str(r['id'])), QStandardItem(r['title']), 
                    QStandardItem(r['artist']), QStandardItem(str(r['year'])), QStandardItem(r.get('image_url',''))]
+            checkbox_item = QStandardItem()
+            checkbox_item.setCheckable(True)
+            checkbox_item.setEditable(False)
+            checkbox_item.setCheckState(Qt.CheckState.Unchecked)
+            row.append(checkbox_item)
             self.model_results.appendRow(row)
         self.lbl_status.setText(f"Found {len(data)} releases.")
+
+    def _on_result_checkbox_changed(self, changed_item):
+        if changed_item.column() != 5 or changed_item.checkState() != Qt.CheckState.Checked:
+            return
+
+        self.model_results.blockSignals(True)
+        try:
+            for row in range(self.model_results.rowCount()):
+                item = self.model_results.item(row, 5)
+                if item is not changed_item and item is not None:
+                    item.setCheckState(Qt.CheckState.Unchecked)
+        finally:
+            self.model_results.blockSignals(False)
 
     def _on_load_release_details(self):
         sel = self.tbl_results.selectionModel().selection()
@@ -479,10 +499,12 @@ class MetadataTaggerWindow(QMainWindow):
         release_source = fetched_release or sel_data
         release_data_to_use = {
             "artist": release_source.get("artist") or sel_data.get("artist", ""),
+            "album_artist": release_source.get("albumartist") or sel_data.get("albumartist", ""),
             "title": release_source.get("title") or sel_data.get("title", ""),
             "year": release_source.get("year") or sel_data.get("year", ""),
             "genre": release_source.get("genre", ""),
-            "image_url": release_source.get("image_url") or sel_data.get("image_url", ""),
+            "image_url": release_source.get("image_url")
+            or sel_data.get("image_url", ""),
         }
 
         self.bar_progress.setValue(0)
@@ -512,16 +534,19 @@ class MetadataTaggerWindow(QMainWindow):
             tags = {
                 'title': track_title,
                 'artist': release_data['artist'],
+                'albumartist': release_data['album_artist'],
                 'album': release_data['title'],
                 'tracknumber': str(i+1), # Or try to find track number from release
                 'date': str(release_data['year']) if release_data['year'] else '',
-                'genre': release_data['genre']
+                'genre': release_data['genre'], 
+                'comment': release_data.get('notes', '')
             }
             #   success = write_metadata(str(file_obj.path), tags, art_bytes, file_obj.format_name)
             success = write_tags(
                 str(file_obj.path),
                 tags,
                 art_bytes,
+                overwrite = False
             )
             if success:
                 success_count += 1

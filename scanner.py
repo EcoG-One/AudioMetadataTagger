@@ -1,5 +1,4 @@
 """Audio file discovery & metadata extraction."""
-import os
 import music_tag
 from pathlib import Path
 from dataclasses import dataclass, field
