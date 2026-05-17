@@ -278,6 +278,7 @@ class MetadataTaggerWindow(QMainWindow):
         if folder:
             self.lbl_status.setText(f"Selected: {folder}")
             self.base_dir = Path(folder)
+            self._on_scan()
 
     def _on_scan(self):
         if not hasattr(self, 'base_dir'):
@@ -299,34 +300,49 @@ class MetadataTaggerWindow(QMainWindow):
         if not success:
             QMessageBox.critical(self, "Scan Error", data)
             return
-        self.files, failed = data
+        self.files, self.failed = data
         if not self.files:
             QMessageBox.information(self, "Info", "No valid audio files found.")
             return
 
         self.model_files.setRowCount(0)
         for f in self.files:
-            row = [QStandardItem(str(f.filename)), QStandardItem(f.format_name), 
-                   QStandardItem(f"{f.duration:.1f}s"), QStandardItem(f.tags.get('artist','')), 
-                   QStandardItem(f.tags.get('album',''))]
+            min = round(f.duration.value) // 60
+            sec = round(f.duration.value) % 60
+            row = [
+                QStandardItem(str(f.filename)),
+                QStandardItem(f.format_name),
+                QStandardItem(f"{min}:{sec}"),
+                QStandardItem(f.tags.get("albumartist", "") or f.tags.get("artist", "")),
+                QStandardItem(f.tags.get("album", "")),
+            ]
             self.model_files.appendRow(row)
+            print(f.tags)
 
         self.lbl_status.setText(f"Found {len(self.files)} files.")
 
     # --- Discogs Logic ---
     def _on_search_discogs(self):
-        if not self.files:
+        if not self.files and not self.failed:
             QMessageBox.warning(self, "Warning", "Scan files first.")
             return
         if not self.discogs_client:
             QMessageBox.warning(self, "Warning", "Please authenticate with Discogs first.")
             return
 
+        sel = self.tbl_files.selectionModel().selection()
+        if not sel.indexes():
+            return
+
+        sel_row = sel.indexes()[0].row()
+        art = self.model_files.item(sel_row, 3).text()  # Artist column
+        alb = self.model_files.item(sel_row, 4).text()  # Album column
+
         # Get Artist/Album from first file or folder structure
-        first_file = self.files[0]
+        # first_file = self.files[0]
         # Fallback logic from prompt
-        art = first_file.tags.get('artist', self.base_dir.parent.name if hasattr(self.base_dir, 'parent') else "Unknown")
-        alb = first_file.tags.get('album', self.base_dir.name)
+        # art = first_file.tags.get('artist', self.base_dir.parent.name if hasattr(self.base_dir, 'parent') else "Unknown")
+        # alb = first_file.tags.get('album', self.base_dir.name)
 
         # Show confirmation dialog (simplified)
         self.lbl_status.setText("Searching Discogs...")
