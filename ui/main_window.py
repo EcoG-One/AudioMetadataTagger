@@ -10,9 +10,8 @@ from PyQt6.QtWidgets import (QMainWindow, QTabWidget, QTableView,
                              QProgressBar, QLabel, QPushButton, QHeaderView, QMessageBox,
                              QFileDialog, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
                              QPlainTextEdit, QDialog)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
-import mutagen
 import settings
 import logging_util
 
@@ -173,7 +172,9 @@ class MetadataTaggerWindow(QMainWindow):
         self.tbl_files.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.tbl_files.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.model_files = QStandardItemModel()
-        self.model_files.setHorizontalHeaderLabels(["Filename", "Format", "Duration", "Artist", "Album"])
+        self.model_files.setHorizontalHeaderLabels(
+            ["Artist", "Album", "Filename", "Format", "Duration"]
+        )
         self.tbl_files.setModel(self.model_files)
         self.tbl_files.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         file_layout.addWidget(self.tbl_files)
@@ -184,8 +185,9 @@ class MetadataTaggerWindow(QMainWindow):
 
         self.tbl_results = QTableView()
         self.model_results = QStandardItemModel()
-        self.model_results.setHorizontalHeaderLabels(["ID", "Album", "Artist", "Year", "Cover", "Selected"])
-        self.model_results.itemChanged.connect(self._on_result_checkbox_changed)
+        self.model_results.setHorizontalHeaderLabels(
+            ["ID", "Album", "Artist", "Year", "Cover"]
+        )
         self.tbl_results.setModel(self.model_results)
         self.tbl_results.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         res_layout.addWidget(self.tbl_results)
@@ -310,16 +312,20 @@ class MetadataTaggerWindow(QMainWindow):
         for f in self.files:
             min = round(f.duration.value) // 60
             sec = round(f.duration.value) % 60
+
             row = [
+                QStandardItem(
+                    f.tags.get("albumartist", "") or f.tags.get("artist", "")
+                ),
+                QStandardItem(f.tags.get("album", "")),
                 QStandardItem(str(f.filename)),
                 QStandardItem(f.format_name),
                 QStandardItem(f"{min}:{sec}"),
-                QStandardItem(f.tags.get("albumartist", "") or f.tags.get("artist", "")),
-                QStandardItem(f.tags.get("album", "")),
             ]
             self.model_files.appendRow(row)
 
-        self.lbl_status.setText(f"Found {len(self.files)} files.")
+        self.lbl_status.setText(f"Found {len(self.files)} files. Select one for search based on selection's Artist and Album. (Double Click to edit tags directly)")
+        sel = self.tbl_files.selectionModel().selection()
 
     # --- Discogs Logic ---
     def _on_search_discogs(self):
@@ -333,11 +339,11 @@ class MetadataTaggerWindow(QMainWindow):
         # Get Artist/Album from selected file or folder structure
         sel = self.tbl_files.selectionModel().selection()
         if not sel.indexes():
-            return
-
-        sel_row = sel.indexes()[0].row()
-        art = self.model_files.item(sel_row, 3).text()  # Artist column
-        alb = self.model_files.item(sel_row, 4).text()  # Album column
+            sel_row = 0  # Default to first file if none selected
+        else:
+            sel_row = sel.indexes()[0].row()
+        art = self.model_files.item(sel_row, 0).text()  # Artist column
+        alb = self.model_files.item(sel_row, 1).text()  # Album column
 
         # Show confirmation dialog with editable fields
         '''dlg = MetadataPreviewDialog(art, alb, self)
@@ -373,28 +379,17 @@ class MetadataTaggerWindow(QMainWindow):
         self.results_data = data
         self.model_results.setRowCount(0)
         for r in data:
-            row = [QStandardItem(str(r['id'])), QStandardItem(r['title']), 
-                   QStandardItem(r['artist']), QStandardItem(str(r['year'])), QStandardItem(r.get('image_url',''))]
-            checkbox_item = QStandardItem()
-            checkbox_item.setCheckable(True)
-            checkbox_item.setEditable(False)
-            checkbox_item.setCheckState(Qt.CheckState.Unchecked)
-            row.append(checkbox_item)
+            title = r["title"].split(" - ")[-1].strip()  # Album title (after "Artist - Album")
+            artist = r["title"].split(" - ")[0].strip()  # Artist name (before "Artist - Album")
+            row = [
+                QStandardItem(str(r["id"])),
+                QStandardItem(title),
+                QStandardItem(artist),
+                QStandardItem(str(r["year"])),
+                QStandardItem(r.get("image_url", "")),
+            ]
             self.model_results.appendRow(row)
         self.lbl_status.setText(f"Found {len(data)} releases.")
-
-    def _on_result_checkbox_changed(self, changed_item):
-        if changed_item.column() != 5 or changed_item.checkState() != Qt.CheckState.Checked:
-            return
-
-        self.model_results.blockSignals(True)
-        try:
-            for row in range(self.model_results.rowCount()):
-                item = self.model_results.item(row, 5)
-                if item is not changed_item and item is not None:
-                    item.setCheckState(Qt.CheckState.Unchecked)
-        finally:
-            self.model_results.blockSignals(False)
 
     def _on_load_release_details(self):
         sel = self.tbl_results.selectionModel().selection()
@@ -425,6 +420,23 @@ class MetadataTaggerWindow(QMainWindow):
                 txt += f"{t['position']}. {t['title']}\n"
             self.txt_details.setPlainText(txt)
             self.lbl_status.setText("Details loaded.")
+            self.model_files.setRowCount(0)
+            self.model_files.setHorizontalHeaderLabels(
+                ["Artist", "Album", "Filename", "Song Title", "Position", "Duration", "Format"]
+            )
+            for f, t in zip(self.files, release.get("tracks", [])):
+                min = round(f.duration.value) // 60
+                sec = round(f.duration.value) % 60
+                row = [
+                    QStandardItem(release["artist"]),
+                    QStandardItem(release["title"]),
+                    QStandardItem(str(f.filename)),
+                    QStandardItem(t["title"]),
+                    QStandardItem(t["position"]),
+                    QStandardItem(f"{min}:{sec:02}"),
+                    QStandardItem(release["format"]),
+                ]
+                self.model_files.appendRow(row)
         else:
             self.lbl_status.setText(f"Failed to load details for ID {res_id}.")
 
@@ -578,6 +590,7 @@ class MetadataTaggerWindow(QMainWindow):
             QPushButton { background: #0078d4; color: white; border: none; padding: 8px; border-radius: 4px; }
             QPushButton:hover { background: #0063b1; }
             QTableView { color: white; background: #3a3a3a; border: 1px solid #555; alternate-background-color: #444; }
+            QTableView::item:selected { background: #0078d4; color: white; }
             QHeaderView::section { background: #2b2b2b; color: #fff; padding: 4px; }
             QTextEdit { background: #333; color: #ddd; border: 1px solid #555; }
             QMessageBox { background: #2b2b2b; color: #fff; }

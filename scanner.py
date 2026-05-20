@@ -34,7 +34,6 @@ def get_existing_tags(file_path: Path) -> Dict[str, str]:
             "artist",
             "tracktitle",
             "tracknumber",
-            "date",
             "genre",
         ]:
             val = audio.get(key, audio.get(key.upper(), None))

@@ -115,10 +115,13 @@ class DiscogsClient:
         return {
             "id": data.get("id"),
             "title": data.get("title"),
-            "artist": data.get("artist"),
+            "artist": data["artists"][0]["name"] or data.get("artist"),
             "year": data.get("year"),
+            "format": data.get("formats", [{}])[0].get("name", ""),
             "label": labels[0] if labels else "",
+            "country": data.get("country", ""),
             "genre": data.get("genres", [None])[0] if data.get("genres") else "",
             "tracks": tracks,
+            "comment": data.get("notes", ""),
             "image_url": img,
         }
