@@ -14,8 +14,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
 import settings
 import logging_util
-
-# Import your modules
+import requests
 from config import FUZZY_THRESHOLD, DEFAULT_VALIDATE_TAGS, DISCOGS_USER_AGENT
 from auth import OAuthAuthenticator
 from scanner import scan_folder, AudioFile
@@ -534,12 +533,13 @@ class MetadataTaggerWindow(QMainWindow):
         art_url = release_data.get('image_url', '')
         art_bytes = None
         if art_url and settings.SETTINGS.get('embed_artwork', True):
-            import requests
             try:
-                r = requests.get(art_url, timeout=10)
-                art_bytes = r.content if r.status_code == 200 else None
-            except:
-                pass
+                art_bytes = (
+                    self.discogs_client.get_album_artwork(art_url))
+                if not art_bytes:
+                    logger.warning("No images available for release")
+            except Exception as e:
+                logger.error(f"Failed to download artwork: {e}")
 
         success_count = 0
         for i, (file_obj, track_title) in enumerate(matches):

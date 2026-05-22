@@ -76,6 +76,12 @@ class DiscogsClient:
         data = self._make_request(url)
         return self._format_release_data(data)
 
+    def get_album_artwork(self, url: str) -> bytes:
+        """Fetch album artwork for a specific release."""
+        response = self.session.get(url)
+        response.raise_for_status()
+        return response.content
+
     def get_master(self, master_id: int) -> dict:
         """Fetch Master Release info (Fallback for 404 releases)."""
         url = f"https://api.discogs.com/masters/{master_id}"

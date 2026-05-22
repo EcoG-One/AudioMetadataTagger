@@ -1,6 +1,6 @@
 """Metadata reading/writing & fuzzy matching."""
-import os
 import music_tag
+from PIL import Image
 from fuzzywuzzy import fuzz
 from typing import List, Dict, Optional, Tuple
 import logging
@@ -81,7 +81,8 @@ def write_tags(file_path: str, metadata: Dict = {}, artwork_bytes: Optional[byte
         if artwork_bytes:
             try:
                 logger.debug("Writing album artwork...")
-                audio_file["artwork"] = artwork_bytes
+                # Convert bytes to a Pillow Image
+                audio_file["artwork"] = (artwork_bytes)
             except Exception as e:
                 logger.warning(f"Could not write artwork: {e}")
 
@@ -93,5 +94,3 @@ def write_tags(file_path: str, metadata: Dict = {}, artwork_bytes: Optional[byte
     except Exception as e:
         logger.error(f"Error writing tags to {file_path}: {e}")
         return False
-    
-    
