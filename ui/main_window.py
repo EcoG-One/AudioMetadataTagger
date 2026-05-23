@@ -172,7 +172,12 @@ class MetadataTaggerWindow(QMainWindow):
             ["Artist", "Album", "Filename", "Format", "Duration"]
         )
         self.tbl_files.setModel(self.model_files)
-        self.tbl_files.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tbl_files.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.tbl_files.setColumnWidth(0, 150)
+        self.tbl_files.setColumnWidth(1, 200)
+        self.tbl_files.setColumnWidth(2, 350)
+        self.tbl_files.setColumnWidth(3, 50)
+        self.tbl_files.setColumnWidth(4, 60)
         file_layout.addWidget(self.tbl_files)
 
         # --- Results Tab ---
@@ -186,6 +191,11 @@ class MetadataTaggerWindow(QMainWindow):
         )
         self.tbl_results.setModel(self.model_results)
         self.tbl_results.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        self.tbl_results.setColumnWidth(0, 80)
+        self.tbl_results.setColumnWidth(1, 200)
+        self.tbl_results.setColumnWidth(2, 150)
+        self.tbl_results.setColumnWidth(3, 50)
+        self.tbl_results.setColumnWidth(4, 450)
         res_layout.addWidget(self.tbl_results)
 
         # Selected Release View
@@ -203,7 +213,7 @@ class MetadataTaggerWindow(QMainWindow):
         # Detail View
         self.txt_details = QTextEdit()
         self.txt_details.setReadOnly(True)
-        self.txt_details.setMaximumHeight(150)
+        self.txt_details.setMaximumHeight(256)
         self.rel_box.addWidget(self.txt_details)
 
         res_layout.addLayout(self.rel_box)
@@ -468,8 +478,15 @@ class MetadataTaggerWindow(QMainWindow):
             self.lbl_status.setText("Details loaded.")
             self.model_files.setRowCount(0)
             self.model_files.setHorizontalHeaderLabels(
-                ["Artist", "Album", "Filename", "Song Title", "Position", "Duration", "Format"]
+                ["Artist", "Album", "Filename", "Song Title", "Nmb", "Time", "Format"]
             )
+            self.tbl_files.setColumnWidth(0, 150)
+            self.tbl_files.setColumnWidth(1, 150)
+            self.tbl_files.setColumnWidth(2, 250)
+            self.tbl_files.setColumnWidth(3, 150)
+            self.tbl_files.setColumnWidth(4, 30)
+            self.tbl_files.setColumnWidth(5, 40)
+            self.tbl_files.setColumnWidth(6, 60)
             for f, t in zip(self.files, release.get("tracks", [])):
                 min = round(f.duration.value) // 60
                 sec = round(f.duration.value) % 60
