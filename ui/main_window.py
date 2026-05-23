@@ -238,6 +238,23 @@ class MetadataTaggerWindow(QMainWindow):
         self.btn_match.clicked.connect(self._on_match_and_tag)
         self.btn_start_auth.clicked.connect(self._on_authenticate_discogs)
         self.btn_load_details.clicked.connect(self._on_load_release_details)
+        self._connect_results_selection_handler()
+
+    def _connect_results_selection_handler(self):
+        """Load release details automatically when the selected result row changes."""
+        selection_model = self.tbl_results.selectionModel()
+        if selection_model is not None:
+            selection_model.currentRowChanged.connect(self._on_results_row_selected)
+
+    def _on_results_row_selected(self, current, previous):
+        if not current.isValid():
+            return
+        if not hasattr(self, "results_data"):
+            return
+        if current.row() >= len(self.results_data):
+            return
+
+        self._on_load_release_details()
 
     def _setup_workers(self):
         self.worker_scan = WorkerThread(self._do_scan)
