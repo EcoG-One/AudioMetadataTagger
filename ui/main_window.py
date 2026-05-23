@@ -1,8 +1,6 @@
 """Main Application Window & Workflow Controller."""
 import sys
 import os
-import json
-import time
 import logging
 import webbrowser
 from pathlib import Path
@@ -10,11 +8,10 @@ from PyQt6.QtWidgets import (QMainWindow, QTabWidget, QTableView,
                              QProgressBar, QLabel, QPushButton, QHeaderView, QMessageBox,
                              QFileDialog, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
                              QPlainTextEdit, QDialog)
-from PyQt6.QtCore import QThread, pyqtSignal
-from PyQt6.QtGui import QStandardItemModel, QStandardItem
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QImage, QPixmap, QStandardItemModel, QStandardItem
 import settings
 import logging_util
-import requests
 from config import FUZZY_THRESHOLD, DEFAULT_VALIDATE_TAGS, DISCOGS_USER_AGENT
 from auth import OAuthAuthenticator
 from scanner import scan_folder, AudioFile
@@ -191,11 +188,25 @@ class MetadataTaggerWindow(QMainWindow):
         self.tbl_results.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         res_layout.addWidget(self.tbl_results)
 
+        # Selected Release View
+        self.rel_box = QHBoxLayout()
+
+        # Release Album Art
+        self.album_art = QLabel()
+        self.album_art.setFixedSize(256, 256)
+        self.album_art.setScaledContents(True)
+        self.album_art.setPixmap(
+            QPixmap("ui.images/default_album_art.png")
+        )  # Replace with actual cover image loading
+        self.rel_box.addWidget(self.album_art)
+
         # Detail View
         self.txt_details = QTextEdit()
         self.txt_details.setReadOnly(True)
         self.txt_details.setMaximumHeight(150)
-        res_layout.addWidget(self.txt_details)
+        self.rel_box.addWidget(self.txt_details)
+
+        res_layout.addLayout(self.rel_box)
 
         self.btn_load_details = QPushButton("Load Details for Selection")
         res_layout.addWidget(self.btn_load_details)
@@ -390,6 +401,40 @@ class MetadataTaggerWindow(QMainWindow):
             self.model_results.appendRow(row)
         self.lbl_status.setText(f"Found {len(data)} releases.")
 
+    def set_album_art(self, art_url):
+        """
+        Sets release album art.
+        """
+        if art_url:
+            try:
+                art_bytes = (
+                self.discogs_client.get_album_artwork(art_url))
+                img = QImage.fromData(art_bytes)
+                pix = QPixmap.fromImage(img)
+                self.album_art.setPixmap(
+                    pix.scaled(
+                        self.album_art.size(),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+                return
+            except Exception as e:
+                self.album_art.setPixmap(
+                    QPixmap("images/default_album_art.png")
+                    if os.path.exists("static/images/default_album_art.png")
+                    else QPixmap()
+                )
+                self.lbl_status.setText("Base64 album art decode error:" + str(e))
+        else:
+            # Fallback image
+            self.album_art.setPixmap(
+                QPixmap("images/default_album_art.png")
+                if os.path.exists("images/default_album_art.png")
+                else QPixmap()
+            )
+        return
+
     def _on_load_release_details(self):
         sel = self.tbl_results.selectionModel().selection()
         if not sel.indexes():
@@ -418,6 +463,8 @@ class MetadataTaggerWindow(QMainWindow):
             for t in release.get("tracks", []):
                 txt += f"{t['position']}. {t['title']}\n"
             self.txt_details.setPlainText(txt)
+            self.set_album_art(release.get("image_url"))
+
             self.lbl_status.setText("Details loaded.")
             self.model_files.setRowCount(0)
             self.model_files.setHorizontalHeaderLabels(
@@ -438,6 +485,23 @@ class MetadataTaggerWindow(QMainWindow):
                 self.model_files.appendRow(row)
         else:
             self.lbl_status.setText(f"Failed to load details for ID {res_id}.")
+
+    def fuzzy_match_tracks(self, track_titles):
+        # Proceed with matching
+        matches = []
+        for f in self.files:
+            clean_name = Path(f.filename).stem
+            matched_title, score = fuzzy_match_track(
+                clean_name, [t["title"] for t in track_titles], FUZZY_THRESHOLD
+            )
+            if matched_title:
+                matches.append((f, matched_title))
+
+        if not matches:
+            QMessageBox.warning(
+                self, "Match Failed", "No tracks matched automatically."
+            )
+            return matches
 
     # --- Tagging Logic ---
     def _on_match_and_tag(self):
@@ -487,13 +551,8 @@ class MetadataTaggerWindow(QMainWindow):
 
         # Proceed with matching
         matches = []
-        for f in self.files:
-            clean_name = Path(f.filename).stem
-            matched_title, score = fuzzy_match_track(
-                clean_name, [t["title"] for t in tracks], FUZZY_THRESHOLD
-            )
-            if matched_title:
-                matches.append((f, matched_title))
+        for f, t in zip(self.files, tracks):
+            matches.append((f, t["title"]))
 
         if not matches:
             QMessageBox.warning(
