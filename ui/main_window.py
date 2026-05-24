@@ -237,7 +237,7 @@ class MetadataTaggerWindow(QMainWindow):
         self.btn_search.clicked.connect(self._on_search_discogs)
         self.btn_match.clicked.connect(self._on_match_and_tag)
         self.btn_start_auth.clicked.connect(self._on_authenticate_discogs)
-        self.btn_load_details.clicked.connect(self._on_load_release_details)
+        # self.btn_load_details.clicked.connect(self._on_load_release_details)
         self._connect_results_selection_handler()
 
     def _connect_results_selection_handler(self):
@@ -251,10 +251,10 @@ class MetadataTaggerWindow(QMainWindow):
             return
         if not hasattr(self, "results_data"):
             return
-        if current.row() >= len(self.results_data):
+        if current.row() < 0 or current.row() >= len(self.results_data):
             return
 
-        self._on_load_release_details()
+        self._on_load_release_details(current.row())
 
     def _setup_workers(self):
         self.worker_scan = WorkerThread(self._do_scan)
@@ -427,6 +427,8 @@ class MetadataTaggerWindow(QMainWindow):
             ]
             self.model_results.appendRow(row)
         self.lbl_status.setText(f"Found {len(data)} releases.")
+        self.tbl_results.setCurrentIndex(self.tbl_results.model().index(0, 0))   # Select first row by default
+
 
     def set_album_art(self, art_url):
         """
@@ -462,12 +464,25 @@ class MetadataTaggerWindow(QMainWindow):
             )
         return
 
-    def _on_load_release_details(self):
-        sel = self.tbl_results.selectionModel().selection()
-        if not sel.indexes():
+    def _on_load_release_details(self, sel_row=None):
+        if not hasattr(self, "results_data"):
+            return
+        if isinstance(sel_row, bool):
+            sel_row = None
+
+        if sel_row is None:
+            current = self.tbl_results.currentIndex()
+            if current.isValid():
+                sel_row = current.row()
+            else:
+                sel = self.tbl_results.selectionModel().selection()
+                if not sel.indexes():
+                    return
+                sel_row = sel.indexes()[0].row()
+
+        if sel_row < 0 or sel_row >= len(self.results_data):
             return
 
-        sel_row = sel.indexes()[0].row()
         item = self.results_data[sel_row]
         res_id = item["id"]
         master_id = item.get("master_id")
