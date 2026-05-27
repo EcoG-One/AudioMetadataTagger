@@ -2,7 +2,9 @@
 import os
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, 
                              QLabel, QTableView, QTabWidget, QWidget,
-                             QTextEdit, QPlainTextEdit, QProgressBar, QMessageBox)
+                             QTextEdit, QPlainTextEdit, QProgressBar, QMessageBox,
+                             QFormLayout, QSpinBox, QDoubleSpinBox, QCheckBox,
+                             QDialogButtonBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QStandardItemModel, QStandardItem
 from pathlib import Path
@@ -10,6 +12,119 @@ from config import SUPPORTED_EXTENSIONS
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class SettingsDialog(QDialog):
+    """Dialog for editing persisted application settings."""
+
+    def __init__(self, app_settings, parent=None):
+        super().__init__(parent)
+        self.app_settings = app_settings
+        self.setWindowTitle("Settings")
+        self.resize(420, 260)
+
+        self.app_settings.reload()
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.fuzzy_threshold = QSpinBox()
+        self.fuzzy_threshold.setRange(0, 100)
+        self.fuzzy_threshold.setSuffix("%")
+        self.fuzzy_threshold.setMaximumWidth(80)
+        self.fuzzy_threshold.setValue(self._int_setting('fuzzy_threshold', 75, 0, 100))
+        form.addRow("Fuzzy match threshold", self.fuzzy_threshold)
+
+        self.default_page_size = QSpinBox()
+        self.default_page_size.setRange(1, 50)
+        self.default_page_size.setMaximumWidth(80)
+        self.default_page_size.setValue(self._int_setting('default_page_size', 50, 1, 50))
+        form.addRow("Discogs page size", self.default_page_size)
+
+        self.max_search_retries = QSpinBox()
+        self.max_search_retries.setRange(0, 10)
+        self.max_search_retries.setMaximumWidth(80)
+        self.max_search_retries.setValue(self._int_setting('max_search_retries', 3, 0, 10))
+        form.addRow("Max search retries", self.max_search_retries)
+
+        self.api_rate_limit_delay = QDoubleSpinBox()
+        self.api_rate_limit_delay.setRange(0.0, 60.0)
+        self.api_rate_limit_delay.setDecimals(2)
+        self.api_rate_limit_delay.setSingleStep(0.1)
+        self.api_rate_limit_delay.setSuffix(" s")
+        self.api_rate_limit_delay.setMaximumWidth(100)
+        self.api_rate_limit_delay.setValue(
+            self._float_setting('api_rate_limit_delay', 0.2, 0.0, 60.0)
+        )
+        form.addRow("API rate limit delay", self.api_rate_limit_delay)
+
+        self.embed_artwork = QCheckBox("Embed artwork when tagging")
+        self.embed_artwork.setChecked(self._bool_setting('embed_artwork', True))
+        form.addRow("", self.embed_artwork)
+
+        self.validate_tags = QCheckBox("Validate tags before writing")
+        self.validate_tags.setChecked(self._bool_setting('validate_tags', True))
+        form.addRow("", self.validate_tags)
+
+        self.overwrite_existing_tags = QCheckBox("Overwrite existing tags")
+        self.overwrite_existing_tags.setChecked(
+            self._bool_setting('overwrite_existing_tags', False)
+        )
+        form.addRow("", self.overwrite_existing_tags)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._apply_theme()
+
+    def _int_setting(self, key, default, min_value, max_value):
+        try:
+            value = int(self.app_settings.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(min_value, min(max_value, value))
+
+    def _float_setting(self, key, default, min_value, max_value):
+        try:
+            value = float(self.app_settings.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(min_value, min(max_value, value))
+
+    def _bool_setting(self, key, default):
+        value = self.app_settings.get(key, default)
+        return value if isinstance(value, bool) else default
+
+    def _save(self):
+        self.app_settings.update({
+            'fuzzy_threshold': self.fuzzy_threshold.value(),
+            'default_page_size': self.default_page_size.value(),
+            'max_search_retries': self.max_search_retries.value(),
+            'api_rate_limit_delay': self.api_rate_limit_delay.value(),
+            'embed_artwork': self.embed_artwork.isChecked(),
+            'validate_tags': self.validate_tags.isChecked(),
+            'overwrite_existing_tags': self.overwrite_existing_tags.isChecked(),
+        })
+        self.accept()
+
+    def _apply_theme(self):
+        self.setStyleSheet("""
+            QDialog { background-color: #2b2b2b; color: #ffffff; }
+            QVBoxLayout { background-color: #2b2b2b; color: #ffffff; }
+            QDialogButtonBox { border: 1px solid #555; background: #333; }
+            QCheckBox { background: #444; color: #ccc; padding: 8px; }
+            QPushButton { background: #0078d4; color: white; border: none; padding: 8px; border-radius: 4px; }
+            QPushButton:hover { background: #0063b1; }
+            QFormLayout { color: white; background: #3a3a3a; border: 1px solid #555; alternate-background-color: #444; }
+            QSpinBox, QDoubleSpinBox { background: #333; color: #ddd; border: 1px solid #555; }
+            QMessageBox { background: #2b2b2b; color: #fff; }
+        """)
 
 class FileSelectorDialog(QDialog):
     def __init__(self, parent=None):

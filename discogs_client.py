@@ -4,6 +4,7 @@ import requests
 import time
 import logging
 from config import DISCOGS_USER_AGENT
+import settings
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ class DiscogsClient:
         self.session = oauth_session
         self.session.headers["User-Agent"] = DISCOGS_USER_AGENT
         self.last_request_time = 0
-        self.rate_limit_delay = 0.2
+        self.rate_limit_delay = settings.SETTINGS.get('api_rate_limit_delay', 0.2)
 
     def _make_request(self, url, params=None):
         elapsed = time.time() - self.last_request_time
@@ -44,7 +45,7 @@ class DiscogsClient:
         params = {
             "q": query_string,
             "type": "release",
-            "per_page": min(per_page, 50),
+            "per_page": min(settings.SETTINGS.get('default_page_size', 50), 50),
             "page": page,
         }
         url = "https://api.discogs.com/database/search"
@@ -58,8 +59,8 @@ class DiscogsClient:
             results.append(
                 {
                     "id": item["id"],
-                    "title": item.get("title", ""),
-                    "artist": item.get("artist", ""),
+                    "album": item.get("title", ""),
+                    "album_artist": item.get("artist", ""),
                     "year": item.get("year", ""),
                     "image_url": item.get("cover_image", ""),
                     "master_id": item.get(
@@ -96,8 +97,8 @@ class DiscogsClient:
 
         return {
             "id": data.get("id"),
-            "title": data.get("title"),
-            "artist": data.get("artist"),
+            "album": data.get("title"),
+            "album_artist": data.get("artist"),
             "year": data.get("master_year"),
             "tracks": tracks,
             "image_url": data.get("cover_image")
@@ -111,7 +112,7 @@ class DiscogsClient:
 
         tracks = []
         for t in data.get("tracklist", []):
-            tracks.append({"position": t.get("position"), "title": t.get("title")})
+            tracks.append({"position": t.get("position"), "artists": [a["name"] for a in t.get("artists", [])], "title": t.get("title"), "duration": t.get("duration")})
 
         labels = [l["name"] for l in data.get("labels", []) if l.get("name")]
         img = data.get("cover_image", "")
@@ -120,8 +121,8 @@ class DiscogsClient:
 
         return {
             "id": data.get("id"),
-            "title": data.get("title"),
-            "artist": data["artists"][0]["name"] or data.get("artist"),
+            "album": data.get("title"),
+            "album_artist": data["artists"][0]["name"] or data.get("artist"),
             "year": data.get("year"),
             "format": data.get("formats", [{}])[0].get("name", ""),
             "label": labels[0] if labels else "",

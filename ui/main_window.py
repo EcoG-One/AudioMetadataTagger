@@ -12,12 +12,17 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap, QStandardItemModel, QStandardItem
 import settings
 import logging_util
-from config import FUZZY_THRESHOLD, DEFAULT_VALIDATE_TAGS, DISCOGS_USER_AGENT
+from config import DEFAULT_VALIDATE_TAGS, DISCOGS_USER_AGENT
 from auth import OAuthAuthenticator
-from scanner import scan_folder, AudioFile
+from scanner import scan_folder,  group_by_album, AudioFile
 from metadata import fuzzy_match_track, write_tags
 from discogs_client import DiscogsClient
-from ui.dialogs import FileSelectorDialog, MetadataPreviewDialog, SearchResultsDialog
+from ui.dialogs import (
+    FileSelectorDialog,
+    MetadataPreviewDialog,
+    SearchResultsDialog,
+    SettingsDialog,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +152,9 @@ class MetadataTaggerWindow(QMainWindow):
         self.btn_select = QPushButton("Select Folder")
         self.btn_scan = QPushButton("Scan & Preview")
         self.btn_search = QPushButton("Search Discogs")
+        self.btn_tag = QPushButton("Tag Files")
         self.btn_match = QPushButton("Fuzzy Match & Tag")
+        self.btn_settings = QPushButton("Settings")
 
         # New Auth Button
         self.btn_start_auth = QPushButton("Authenticate Discogs")
@@ -156,7 +163,9 @@ class MetadataTaggerWindow(QMainWindow):
         btn_h.addWidget(self.btn_select)
         btn_h.addWidget(self.btn_scan)
         btn_h.addWidget(self.btn_search)
+        btn_h.addWidget(self.btn_tag)
         btn_h.addWidget(self.btn_match)
+        btn_h.addWidget(self.btn_settings)
         btn_h.addStretch()
         btn_h.addWidget(self.btn_start_auth)
         file_layout.addLayout(btn_h)
@@ -169,15 +178,17 @@ class MetadataTaggerWindow(QMainWindow):
         self.tbl_files.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.model_files = QStandardItemModel()
         self.model_files.setHorizontalHeaderLabels(
-            ["Artist", "Album", "Filename", "Format", "Duration"]
+            ["Artist", "Album", "Filename", "Song Title", "Pos", "Time","Format"]
         )
         self.tbl_files.setModel(self.model_files)
         self.tbl_files.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.tbl_files.setColumnWidth(0, 150)
-        self.tbl_files.setColumnWidth(1, 200)
-        self.tbl_files.setColumnWidth(2, 350)
-        self.tbl_files.setColumnWidth(3, 50)
-        self.tbl_files.setColumnWidth(4, 60)
+        self.tbl_files.setColumnWidth(1, 150)
+        self.tbl_files.setColumnWidth(2, 250)
+        self.tbl_files.setColumnWidth(3, 150)
+        self.tbl_files.setColumnWidth(4, 30)
+        self.tbl_files.setColumnWidth(5, 40)
+        self.tbl_files.setColumnWidth(6, 60)
         file_layout.addWidget(self.tbl_files)
 
         # --- Results Tab ---
@@ -235,10 +246,17 @@ class MetadataTaggerWindow(QMainWindow):
         self.btn_select.clicked.connect(self._on_select_folder)
         self.btn_scan.clicked.connect(self._on_scan)
         self.btn_search.clicked.connect(self._on_search_discogs)
-        self.btn_match.clicked.connect(self._on_match_and_tag)
+        self.btn_tag.clicked.connect(self._on_tag_files)
+        self.btn_match.clicked.connect(self._on_fuzzy_match_tracks)
+        self.btn_settings.clicked.connect(self._on_settings)
         self.btn_start_auth.clicked.connect(self._on_authenticate_discogs)
         # self.btn_load_details.clicked.connect(self._on_load_release_details)
         self._connect_results_selection_handler()
+
+    def _on_settings(self):
+        dlg = SettingsDialog(settings.SETTINGS, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.lbl_status.setText("Settings saved.")
 
     def _connect_results_selection_handler(self):
         """Load release details automatically when the selected result row changes."""
@@ -356,8 +374,10 @@ class MetadataTaggerWindow(QMainWindow):
                 ),
                 QStandardItem(f.tags.get("album", "")),
                 QStandardItem(str(f.filename)),
-                QStandardItem(f.format_name),
+                QStandardItem(f.tags.get("title", "")),
+                QStandardItem(f.tags.get("tracknumber", "")),
                 QStandardItem(f"{min}:{sec}"),
+                QStandardItem(f.format_name),
             ]
             self.model_files.appendRow(row)
 
@@ -380,6 +400,8 @@ class MetadataTaggerWindow(QMainWindow):
         else:
             sel_row = sel.indexes()[0].row()
         art = self.model_files.item(sel_row, 0).text()  # Artist column
+        if art == "Various Artists" or art == "VA":
+            art = "Various"
         alb = self.model_files.item(sel_row, 1).text()  # Album column
 
         # Show confirmation dialog with editable fields
@@ -416,19 +438,18 @@ class MetadataTaggerWindow(QMainWindow):
         self.results_data = data
         self.model_results.setRowCount(0)
         for r in data:
-            title = r["title"].split(" - ")[-1].strip()  # Album title (after "Artist - Album")
-            artist = r["title"].split(" - ")[0].strip()  # Artist name (before "Artist - Album")
+            album = r["album"].split(" - ")[-1].strip()  # Album title (after "Artist - Album")
+            album_artist = r["album"].split(" - ")[0].strip()  # Artist name (before "Artist - Album")
             row = [
                 QStandardItem(str(r["id"])),
-                QStandardItem(title),
-                QStandardItem(artist),
+                QStandardItem(album),
+                QStandardItem(album_artist),
                 QStandardItem(str(r["year"])),
                 QStandardItem(r.get("image_url", "")),
             ]
             self.model_results.appendRow(row)
         self.lbl_status.setText(f"Found {len(data)} releases.")
         self.tbl_results.setCurrentIndex(self.tbl_results.model().index(0, 0))   # Select first row by default
-
 
     def set_album_art(self, art_url):
         """
@@ -500,18 +521,18 @@ class MetadataTaggerWindow(QMainWindow):
             )
             release = self.discogs_client.get_master(master_id)
 
-        if release and release.get("title"):
-            txt = f"Title: {release['title']}\nArtist: {release['artist']}\nYear: {release['year']}\n\nTracks:\n"
+        if release and release.get("album"):
+            txt = f"Album: {release['album']}\nArtist: {release['album_artist']}\nYear: {release['year']}\n\nTracks:\n"
             for t in release.get("tracks", []):
-                txt += f"{t['position']}. {t['title']}\n"
+                txt += f"{t['position']}. {t['artists'][0] if t.get('artists') else release['album_artist']} - {t['title']}\n"
             self.txt_details.setPlainText(txt)
             self.set_album_art(release.get("image_url"))
 
             self.lbl_status.setText("Details loaded.")
             self.model_files.setRowCount(0)
-            self.model_files.setHorizontalHeaderLabels(
-                ["Artist", "Album", "Filename", "Song Title", "Nmb", "Time", "Format"]
-            )
+            # self.model_files.setHorizontalHeaderLabels(
+            # ["Artist", "Album", "Filename", "Song Title", "Nmb", "Time", "Format"]
+            # )
             self.tbl_files.setColumnWidth(0, 150)
             self.tbl_files.setColumnWidth(1, 150)
             self.tbl_files.setColumnWidth(2, 250)
@@ -523,8 +544,8 @@ class MetadataTaggerWindow(QMainWindow):
                 min = round(f.duration.value) // 60
                 sec = round(f.duration.value) % 60
                 row = [
-                    QStandardItem(release["artist"]),
-                    QStandardItem(release["title"]),
+                    QStandardItem(t["artists"][0] if t.get("artists") else release["album_artist"]),
+                    QStandardItem(release["album"]),
                     QStandardItem(str(f.filename)),
                     QStandardItem(t["title"]),
                     QStandardItem(t["position"]),
@@ -535,25 +556,95 @@ class MetadataTaggerWindow(QMainWindow):
         else:
             self.lbl_status.setText(f"Failed to load details for ID {res_id}.")
 
-    def fuzzy_match_tracks(self, track_titles):
+    def _on_fuzzy_match_tracks(self):
+        if not self.discogs_client:
+            QMessageBox.warning(
+                self, "Error", "Please authenticate with Discogs first."
+            )
+            return
+        if not hasattr(self, "results_data") or not self.results_data:
+            QMessageBox.warning(self, "Warning", "No search results available.")
+            return
+
+        sel = self.tbl_results.selectionModel().selection()
+        if not sel.indexes():
+            QMessageBox.information(self, "Info", "Please select a release first.")
+            return
+
+        sel_row = sel.indexes()[0].row()
+        sel_data = self.results_data[sel_row]  # This is the raw search result
+
+        fetched_release = None
+
+        # Try to get the tracks
+        tracks = sel_data.get("tracks")
+
+        # If tracks missing or empty, try fetching full details (with fallback)
+        if not tracks:
+            res_id = sel_data["id"]
+            master_id = sel_data.get("master_id")
+            fetched_release = self.discogs_client.get_release(res_id)
+
+            if not fetched_release and master_id:
+                fetched_release = self.discogs_client.get_master(master_id)
+
+            if fetched_release:
+                tracks = fetched_release.get("tracks", [])
+                # Update local display if we successfully fetched details
+                if not self.results_data[sel_row].get("tracks"):
+                    # Optional: Update the table result row with details
+                    pass
+
+        if not tracks:
+            QMessageBox.warning(
+                self, "Error", "Could not fetch tracklist for this release."
+            )
+            return
+
         # Proceed with matching
         matches = []
         for f in self.files:
             clean_name = Path(f.filename).stem
             matched_title, score = fuzzy_match_track(
-                clean_name, [t["title"] for t in track_titles], FUZZY_THRESHOLD
+                clean_name,
+                [t["title"] for t in tracks],
+                settings.SETTINGS.get('fuzzy_threshold', 75),
             )
             if matched_title:
-                matches.append((f, matched_title))
+                matches.append((f, next(t for t in tracks if t["title"] == matched_title)))
 
         if not matches:
             QMessageBox.warning(
                 self, "Match Failed", "No tracks matched automatically."
             )
-            return matches
+        self.model_files.setRowCount(0)
+        self.model_files.setHorizontalHeaderLabels(
+            ["Artist", "Album", "Filename", "Song Title", "Nmb", "Time", "Format"]
+        )
+        self.tbl_files.setColumnWidth(0, 150)
+        self.tbl_files.setColumnWidth(1, 150)
+        self.tbl_files.setColumnWidth(2, 250)
+        self.tbl_files.setColumnWidth(3, 150)
+        self.tbl_files.setColumnWidth(4, 30)
+        self.tbl_files.setColumnWidth(5, 40)
+        self.tbl_files.setColumnWidth(6, 60)
+        for m in matches:
+            min = round(m[0].duration.value) // 60
+            sec = round(m[0].duration.value) % 60
+            row = [
+                QStandardItem(m[0].tags.get("artist") or ""),
+                QStandardItem(m[0].tags.get("album") or ""),
+                QStandardItem(m[0].filename),
+                QStandardItem(m[1]["title"]),
+                QStandardItem(m[0].tags["tracknumber"]),
+                QStandardItem(f"{min}:{sec:02}"),
+                QStandardItem(m[0].format_name),
+            ]
+            self.model_files.appendRow(row)
+        return matches
 
     # --- Tagging Logic ---
-    def _on_match_and_tag(self):
+    def _on_tag_files(self):
         if not self.discogs_client:
             QMessageBox.warning(
                 self, "Error", "Please authenticate with Discogs first."
@@ -601,13 +692,7 @@ class MetadataTaggerWindow(QMainWindow):
         # Proceed with matching
         matches = []
         for f, t in zip(self.files, tracks):
-            matches.append((f, t["title"]))
-
-        if not matches:
-            QMessageBox.warning(
-                self, "Match Failed", "No tracks matched automatically."
-            )
-            return
+            matches.append((f, t))
 
         # ... (Tagging logic) ...
 
@@ -650,10 +735,10 @@ class MetadataTaggerWindow(QMainWindow):
                 logger.error(f"Failed to download artwork: {e}")
 
         success_count = 0
-        for i, (file_obj, track_title) in enumerate(matches):
+        for i, (file_obj, tracks) in enumerate(matches):
             tags = {
-                'title': track_title,
-                'artist': release_data['artist'],
+                'title': tracks['title'],
+                'artist': tracks['artists'][0] if tracks.get('artists') else release_data['album_artist'],
                 'albumartist': release_data['album_artist'],
                 'album': release_data['title'],
                 'tracknumber': str(i+1), # Or try to find track number from release
@@ -666,7 +751,7 @@ class MetadataTaggerWindow(QMainWindow):
                 str(file_obj.path),
                 tags,
                 art_bytes,
-                overwrite = False
+                overwrite=settings.SETTINGS.get('overwrite_existing_tags', False),
             )
             if success:
                 success_count += 1

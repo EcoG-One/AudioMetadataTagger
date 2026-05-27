@@ -25,3 +25,4 @@ API_RATE_LIMIT_DELAY = 0.2  # seconds between requests
 # UI Defaults
 DEFAULT_ARTWORK_EMBED = True
 DEFAULT_VALIDATE_TAGS = True
+OVERWRITE_EXISTING_TAGS = False

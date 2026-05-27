@@ -1,7 +1,25 @@
 """Application settings singleton."""
 import json
 import os
-from config import DEFAULT_ARTWORK_EMBED, DEFAULT_VALIDATE_TAGS
+from config import (
+    API_RATE_LIMIT_DELAY,
+    DEFAULT_ARTWORK_EMBED,
+    DEFAULT_PAGE_SIZE,
+    DEFAULT_VALIDATE_TAGS,
+    FUZZY_THRESHOLD,
+    MAX_SEARCH_RETRIES,
+    OVERWRITE_EXISTING_TAGS,
+)
+
+DEFAULT_SETTINGS = {
+    'embed_artwork': DEFAULT_ARTWORK_EMBED,
+    'validate_tags': DEFAULT_VALIDATE_TAGS,
+    'overwrite_existing_tags': OVERWRITE_EXISTING_TAGS,
+    'fuzzy_threshold': FUZZY_THRESHOLD,
+    'default_page_size': DEFAULT_PAGE_SIZE,
+    'max_search_retries': MAX_SEARCH_RETRIES,
+    'api_rate_limit_delay': API_RATE_LIMIT_DELAY,
+}
 
 class Settings:
     _instance = None
@@ -21,15 +39,24 @@ class Settings:
             try:
                 with open(self.config_path, 'r') as f:
                     self._settings = json.load(f)
-            except: pass
-        self._settings.setdefault('embed_artwork', DEFAULT_ARTWORK_EMBED)
-        self._settings.setdefault('validate_tags', DEFAULT_VALIDATE_TAGS)
-        
+            except (OSError, json.JSONDecodeError):
+                self._settings = {}
+        for key, value in DEFAULT_SETTINGS.items():
+            self._settings.setdefault(key, value)
+
+    def reload(self):
+        self._settings = {}
+        self._load()
+
     def get(self, key, default=None):
         return self._settings.get(key, default)
         
     def set(self, key, value):
         self._settings[key] = value
+        self._save()
+
+    def update(self, values):
+        self._settings.update(values)
         self._save()
         
     def _save(self):
@@ -38,7 +65,7 @@ class Settings:
             json.dump(self._settings, f, indent=2)
             
     def init_defaults(self):
-        self.get('embed_artwork', DEFAULT_ARTWORK_EMBED)
-        self.get('validate_tags', DEFAULT_VALIDATE_TAGS)
+        for key, value in DEFAULT_SETTINGS.items():
+            self.get(key, value)
 
 SETTINGS = Settings()

@@ -157,7 +157,6 @@ def _extract_file_info(file_path: Path, root_path: Path) -> Optional[Dict]:
         logger.error(f"Error extracting file info from {file_path}: {e}")
         return None
 
-@staticmethod
 def group_by_album(files: List[Dict]) -> Dict[tuple, List[Dict]]:
     """
     Group audio files by artist/album combination.
@@ -169,21 +168,21 @@ def group_by_album(files: List[Dict]) -> Dict[tuple, List[Dict]]:
         Dictionary with (artist, album) tuples as keys and file lists as values
     """
     grouped = {}
-    
-    for file_info in files:
-        artist = file_info.get("folder_artist", "Unknown Artist")
-        album = file_info.get("folder_album", "Unknown Album")
+
+    for file in files:
+        artist = file.tags.get("artist") or "",
+        album = file.tags.get("album") or "",
         key = (artist, album)
-        
+
         if key not in grouped:
             grouped[key] = []
-        
-        grouped[key].append(file_info)
-    
+
+        grouped[key].append(file)
+
     logger.info(f"Grouped {len(files)} files into {len(grouped)} album(s)")
     return grouped
 
-@staticmethod
+
 def verify_artist_album(artist: str, album: str) -> bool:
     """
     Verify that artist and album names are valid (non-empty and reasonable length).
