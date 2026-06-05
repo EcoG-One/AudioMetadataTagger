@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from datetime import date
 import logging
 import re
+import json
 import time
+import argparse
 from typing import Any, Callable, Iterable, Literal, Optional, TypeVar
 import musicbrainzngs
 
@@ -23,6 +25,9 @@ _REQUEST_DELAY = 1.2
 _MAX_RETRIES = 3
 RETRY_DELAY = 2.0
 _RETRY_STATUS_CODES = {429, 502, 503, 504}
+_DEFAULT_SEARCH_LIMIT = 15
+_DATE_RECORDING_LIMIT = 8
+_RELEASES_PER_RECORDING_LIMIT = 30
 
 _EXCLUDED_SECONDARY_TYPES = {
     "compilation",
@@ -292,7 +297,12 @@ class MusicBrainzClient:
             raise last_error
         raise RuntimeError("MusicBrainz request failed without an exception")
 
-    def search_recordings(self, artist: str, title: str, limit: int = 25) -> list[dict[str, Any]]:
+    def search_recordings(
+        self,
+        artist: str,
+        title: str,
+        limit: int = _DEFAULT_SEARCH_LIMIT,
+    ) -> list[dict[str, Any]]:
         """Search recordings for an artist/title pair."""
 
         query = f'artist:"{artist}" AND recording:"{title}"'
@@ -303,7 +313,11 @@ class MusicBrainzClient:
         )
         return response.get("recording-list", [])
 
-    def browse_recording_releases(self, recording_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    def browse_recording_releases(
+        self,
+        recording_id: str,
+        limit: int = _RELEASES_PER_RECORDING_LIMIT,
+    ) -> list[dict[str, Any]]:
         """Fetch releases that include a recording."""
 
         response = self._call(
@@ -314,7 +328,12 @@ class MusicBrainzClient:
         )
         return response.get("release-list", [])
 
-    def search_releases(self, artist: str, title: str, limit: int = 25) -> list[dict[str, Any]]:
+    def search_releases(
+        self,
+        artist: str,
+        title: str,
+        limit: int = _DEFAULT_SEARCH_LIMIT,
+    ) -> list[dict[str, Any]]:
         """Search releases for an artist/title pair."""
 
         query = f'artist:"{artist}" AND release:"{title}"'
@@ -395,12 +414,16 @@ def determine_earliest_valid_release_date(
     """
 
     mb_client = client or MusicBrainzClient()
-    recordings = mb_client.search_recordings(artist, title, limit=50)
+    recordings = mb_client.search_recordings(artist, title, limit=_DEFAULT_SEARCH_LIMIT)
     matched = [
         recording
-        for recording in recordings
+        for recording in sorted(
+            recordings,
+            key=lambda item: _recording_match_score(artist, title, item),
+            reverse=True,
+        )
         if titles_match(title, str(recording.get("title", ""))) and artists_match(artist, recording)
-    ]
+    ][:_DATE_RECORDING_LIMIT]
 
     canonical_dated_candidates: list[tuple[date, int, str]] = []
     recording_dated_candidates: list[tuple[date, int, str]] = []
@@ -415,7 +438,10 @@ def determine_earliest_valid_release_date(
             continue
 
         try:
-            releases = mb_client.browse_recording_releases(recording_id)
+            releases = mb_client.browse_recording_releases(
+                recording_id,
+                limit=_RELEASES_PER_RECORDING_LIMIT,
+            )
         except musicbrainzngs.WebServiceError:
             continue
 
@@ -632,20 +658,48 @@ def lookup_musicbrainz_metadata(
     raise ValueError('type must be either "track" or "album"')
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
+def example_usage() -> None:
+    """Demonstrate track and album lookups without running automatically."""
 
     track = lookup_musicbrainz_metadata(
         artist="Kate Bush",
         title="Running Up That Hill",
         type="track",
     )
-    print(track)
+    print(json.dumps(track, indent=2))
 
     album = lookup_musicbrainz_metadata(
         artist="Radiohead",
         title="OK Computer",
         type="album",
     )
-    print(album)
+    print(json.dumps(album, indent=2))
+
+
+def _main() -> None:
+    """Run a single explicit lookup from the command line."""
+
+    parser = argparse.ArgumentParser(description="Look up MusicBrainz metadata.")
+    parser.add_argument("--artist", required=True, help="Artist name to search for.")
+    parser.add_argument("--title", required=True, help="Track or album title to search for.")
+    parser.add_argument(
+        "--type",
+        required=True,
+        choices=("track", "album"),
+        help="Lookup type.",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
+
+    metadata = lookup_musicbrainz_metadata(
+        artist=args.artist,
+        title=args.title,
+        type=args.type,
+    )
+    print(json.dumps(metadata, indent=2))
+
+
+if __name__ == "__main__":
+    _main()
