@@ -29,3 +29,4 @@ def setup_logging():
     # Redirect third-party loggers to silence noisy output
     logging.getLogger("discogs_client").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
